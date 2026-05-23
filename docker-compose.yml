@@ -1,0 +1,20 @@
+services:
+  fastapi:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    restart: unless-stopped
+
+  streamlit:
+    build: ./frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - API_BASE=http://fastapi:8000
+    volumes:
+      - ./frontend:/app
+    depends_on:
+      - fastapi
+    restart: unless-stopped
