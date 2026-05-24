@@ -1,4 +1,4 @@
-# CPU Scheduling Simulator
+# OS Scheduling Simulator
 
 An interactive web app for simulating and visualizing OS CPU scheduling algorithms — FCFS, SJF, Round Robin, Priority, and MLFQ — with deadlock detection and a scheduling recommendation engine.
 
