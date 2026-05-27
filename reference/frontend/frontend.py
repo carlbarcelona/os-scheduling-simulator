@@ -13,7 +13,7 @@ default_rows = [
 st.write("Edit your process sequence below:")
 
 # 2. Render the interactive spreadsheet grid
-# 'num_rows="dynamic"' allows users to hit a '+' button to add new rows!
+# 'num_rows="dynamic"' allows users to hit a '+' button to add new rows
 edited_data = st.data_editor(default_rows, num_rows="dynamic")
 
 if st.button("Submit all Tasks to Backend"):
@@ -24,7 +24,10 @@ if st.button("Submit all Tasks to Backend"):
     try:
         response = requests.post(f"{API_BASE}/process-fcfs", json=payload)
         st.success("Backend Response Received!")
-        st.json(response.json())
+        reply = response.json()
+        # Get all the necessary values from the response
+        st.write(reply['schedule'])
+        st.write(reply['timeline'])
     except requests.exceptions.ConnectionError:
         st.error("Is your FastAPI backend running?")
-        st.json(response.json())
+
