@@ -39,7 +39,7 @@ def fcfs_example(processes: List[ProcessInput]):
     ],
     "timeline": [
         {"type": "process", "pid": "P1", "start": 0, "end": 8},
-        {"type": "idle", "pid": "IDLE", "start": 8, "end": 10} # Insert an IDLE string if CPU is idle 
+        {"type": "idle", "pid": "NULL", "start": 8, "end": 10} # Insert a NULL string if CPU is idle 
     ],
     "avg_waiting_time": 4.0,
     "avg_turnaround_time": 10.0,
