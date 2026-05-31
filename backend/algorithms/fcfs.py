@@ -1,64 +1,67 @@
 gantt_chart = []
-all_task = []
-process_count = 0 
+processes = []
+process_count = 0
 
 while True:
-    #Number of processes
     process_count += 1
-    
-    #Entering new entry
     arrival_time = float(input("Enter arrival time: "))
     burst_time = float(input("Enter burst time: "))
-    all_task.append({
-        "process_name": f"P{process_count}", 
-        "arrival_time": arrival_time, 
-        "burst_time": burst_time
+    processes.append({
+        "pid": f"P{process_count}",
+        "arrival_time": arrival_time,
+        "burst_time": burst_time,
+        "priority": 0
     })
-
-    #Adding more entries 
     if input("Add more entries (y/n): ").lower() != "y":
         break
-    
-#Sorting list to first arrival
-all_task.sort(key=lambda t: t["arrival_time"])
 
-#Processing Time
-current_time = 0
+def fcfs(processes):
+    sorted_processes = sorted(processes, key=lambda t: t["arrival_time"])
 
-for task in all_task:
-    #Current task
-    if current_time < task["arrival_time"]:
-        gantt_chart.append({
-            "process_name": "idle",
-            "start_time": current_time,
-            "end_time": task["arrival_time"]
-        })
-        current_time = task["arrival_time"]
-    
-    #Current process time (start--->finish)
-    start_time = current_time
-    end_time = current_time + task["burst_time"]
+    schedule = []
+    timeline = []
+    current_time = 0
+    total_waiting = 0
+    total_turnaround = 0
+    cpu_busy = 0
 
-    #Updating the gantt chart
-    gantt_chart.append({
-        "process_name": task["process_name"],
-        "start_time": start_time,
-        "end_time": end_time
-    })
-    current_time = end_time
+    for task in sorted_processes:
+        if current_time < task["arrival_time"]:
+            timeline.append({
+                "type": "idle",
+                "pid": None,
+                "start": current_time,
+                "end": task["arrival_time"]
+            })
+            current_time = task["arrival_time"]
 
-    #Turn around time and waiting per task
-    task["start_time"] = start_time
-    task["end_time"] = end_time
-    task["turnaround_time"] = end_time - task["arrival_time"]
-    task["waiting_time"] = task["turnaround_time"] - task["burst_time"]
+        start = current_time
+        end = current_time + task["burst_time"]
 
+        schedule.append({"pid": task["pid"], "start": start, "end": end})
+        timeline.append({"type": "process", "pid": task["pid"], "start": start, "end": end})
 
-#Outputs (terminal only)
-print("Gantt Chart:")
-for ent in gantt_chart:
-    print(f" {ent['process_name']}: {ent['start_time']} --> {ent['end_time']}")
+        turnaround = end - task["arrival_time"]
+        waiting = turnaround - task["burst_time"]
+        total_waiting += waiting
+        total_turnaround += turnaround
+        cpu_busy += task["burst_time"]
+        current_time = end
 
-print("Process Details:")
-for task in all_task:
-    print(f"{task['process_name']} | AT: {task['arrival_time']} | BT: {task['burst_time']} | TAT: {task['turnaround_time']} | WT:{task['waiting_time']}")
+    n = len(processes)
+    return {
+        "schedule": schedule,
+        "timeline": timeline,
+        "avg_waiting_time": total_waiting / n,
+        "avg_turnaround_time": total_turnaround / n,
+        "cpu_utilization": (cpu_busy / current_time) * 100
+    }
+
+result = fcfs(processes)
+print("\nGantt Chart:")
+for ent in result["timeline"]:
+    pid = ent["pid"] if ent["pid"] else "idle"
+    print(f"  {pid}: {ent['start']} --> {ent['end']}")
+print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
+print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
+print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")
