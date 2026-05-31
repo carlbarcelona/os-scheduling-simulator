@@ -1,84 +1,88 @@
 gantt_chart = []
-all_task = []
-process_count = 0 
+processes = []
+process_count = 0
 
 while True:
-    #Number of processes
     process_count += 1
-    
-    #Entering new entry
     arrival_time = float(input("Enter arrival time: "))
     burst_time = float(input("Enter burst time: "))
-    all_task.append({
-        "process_name": f"P{process_count}", 
-        "arrival_time": arrival_time, 
-        "burst_time": burst_time
+    processes.append({
+        "pid": f"P{process_count}",
+        "arrival_time": arrival_time,
+        "burst_time": burst_time,
+        "priority": 0
     })
-
-    #Adding more entries 
     if input("Add more entries (y/n): ").lower() != "y":
         break
-    
-#Sorting list to first arrival
-all_task.sort(key=lambda t: t["arrival_time"])
 
-#Processing Time
-current_time = 0
-remaining_task = [{**t, "remaining_time": t["burst_time"]} for t in all_task]
+def sjf_preemptive(processes):
+    remaining = [{**t, "remaining_time": t["burst_time"]} for t in processes]
 
-while remaining_task:
-    #Get all task available 
-    available = [t for t in remaining_task if t["arrival_time"] <= current_time]
+    schedule = []
+    timeline = []
+    current_time = 0
+    total_waiting = 0
+    total_turnaround = 0
+    cpu_busy = 0
 
-    #If the CPU is idle
-    if not available:
-        next_arrival = min(remaining_task, key=lambda t: t["arrival_time"])
-        gantt_chart.append({
-            "process_name": "idle",
-            "start_time": current_time,
-            "end_time": next_arrival["arrival_time"]
-        })
-        current_time = next_arrival["arrival_time"]
-        continue
-    
-    #Choosing shortest job available
-    task = min(available, key=lambda t: t["remaining_time"])
+    while remaining:
+        available = [t for t in remaining if t["arrival_time"] <= current_time]
 
-    #Rechecks available task every second
-    task["remaining_time"] -= 1
-    current_time += 1
+        if not available:
+            next_arrival = min(remaining, key=lambda t: t["arrival_time"])
+            timeline.append({
+                "type": "idle",
+                "pid": None,
+                "start": current_time,
+                "end": next_arrival["arrival_time"]
+            })
+            current_time = next_arrival["arrival_time"]
+            continue
 
-    #Updating the gantt chart
-    if gantt_chart and gantt_chart[-1]["process_name"] == task["process_name"]:
-        gantt_chart[-1]["end_time"] = current_time
-    else:
-        gantt_chart.append({
-            "process_name": task["process_name"],
-            "start_time": current_time - 1,
-            "end_time": current_time
-        })
+        task = min(available, key=lambda t: t["remaining_time"])
 
-    #Turn around time and waiting time per task
-    if task["remaining_time"] == 0:
-        task["end_time"] = current_time
-        task["turnaround_time"] = current_time - task["arrival_time"]
-        task["waiting_time"] = task["turnaround_time"] - task["burst_time"]
+        task["remaining_time"] -= 1
+        current_time += 1
+        cpu_busy += 1
 
-        for og in all_task:
-            if og["process_name"] == task["process_name"]:
-                og["turnaround_time"] = task["turnaround_time"]
-                og["waiting_time"] = task["waiting_time"]
-                break
+        if timeline and timeline[-1]["type"] == "process" and timeline[-1]["pid"] == task["pid"]:
+            timeline[-1]["end"] = current_time
+        else:
+            timeline.append({
+                "type": "process",
+                "pid": task["pid"],
+                "start": current_time - 1,
+                "end": current_time
+            })
 
-        #Ending process
-        remaining_task.remove(task)
+        if task["remaining_time"] == 0:
+            turnaround = current_time - task["arrival_time"]
+            waiting = turnaround - task["burst_time"]
+            total_waiting += waiting
+            total_turnaround += turnaround
 
-#Outputs (terminal only)
-print("Gantt Chart:")
-for ent in gantt_chart:
-    print(f" {ent['process_name']}: {ent['start_time']} --> {ent['end_time']}")
+            task_timeline = [t for t in timeline if t.get("pid") == task["pid"]]
+            schedule.append({
+                "pid": task["pid"],
+                "start": task_timeline[0]["start"],
+                "end": current_time
+            })
+            remaining.remove(task)
 
-print("Process Details:")
-for task in all_task:
-    print(f"{task['process_name']} | AT: {task['arrival_time']} | BT: {task['burst_time']} | TAT: {task['turnaround_time']} | WT:{task['waiting_time']}")
+    n = len(processes)
+    return {
+        "schedule": schedule,
+        "timeline": timeline,
+        "avg_waiting_time": total_waiting / n,
+        "avg_turnaround_time": total_turnaround / n,
+        "cpu_utilization": (cpu_busy / current_time) * 100
+    }
 
+result = sjf_preemptive(processes)
+print("\nGantt Chart:")
+for ent in result["timeline"]:
+    pid = ent["pid"] if ent["pid"] else "idle"
+    print(f"  {pid}: {ent['start']} --> {ent['end']}")
+print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
+print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
+print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")
