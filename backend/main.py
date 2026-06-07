@@ -10,6 +10,10 @@ from schemas import (
 from algorithms.fcfs import *
 from algorithms.sjf_nonpree import *
 from algorithms.sjf_pree import *
+from algorithms.priority_pree import*
+from algorithms.priority_nonpree import *
+from algorithms.round_robin import *
+
 
 app = FastAPI(title="CPU Scheduling Simulator")
 
@@ -44,12 +48,15 @@ def schedule_np_sjf(request: ScheduleRequest):
 
 @app.post("/schedule/priority_pre", response_model=ScheduleResult)
 def schedule_np_sjf(request: ScheduleRequest):
-    return mock_schedule_result()
+    processes = [details.model_dump() for details in request.processes]
+    return priority_preemptive(processes)
 
 @app.post("/schedule/priority_np", response_model=ScheduleResult)
 def schedule_np_sjf(request: ScheduleRequest):
-    return mock_schedule_result()
+    processes = [details.model_dump() for details in request.processes]
+    return priority_non_preemptive(processes)
 
 @app.post("/schedule/round_robin", response_model=ScheduleResult)
 def schedule_np_sjf(request: ScheduleRequest):
-    return mock_schedule_result()
+    processes = [details.model_dump() for details in request.processes]
+    return round_robin(processes)
