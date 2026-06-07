@@ -1,3 +1,5 @@
+# frontend/app.py
+
 import streamlit as st
 import requests
 from config import API_BASE
