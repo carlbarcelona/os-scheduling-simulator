@@ -2,18 +2,18 @@ gantt_chart = []
 processes = []
 process_count = 0
 
-while True:
-    process_count += 1
-    arrival_time = float(input("Enter arrival time: "))
-    burst_time = float(input("Enter burst time: "))
-    processes.append({
-        "pid": f"P{process_count}",
-        "arrival_time": arrival_time,
-        "burst_time": burst_time,
-        "priority": 0
-    })
-    if input("Add more entries (y/n): ").lower() != "y":
-        break
+# while True:
+#     process_count += 1
+#     arrival_time = float(input("Enter arrival time: "))
+#     burst_time = float(input("Enter burst time: "))
+#     processes.append({
+#         "pid": f"P{process_count}",
+#         "arrival_time": arrival_time,
+#         "burst_time": burst_time,
+#         "priority": 0
+#     })
+#     if input("Add more entries (y/n): ").lower() != "y":
+#         break
 
 def sjf_non_preemptive(processes):
     remaining = [t.copy() for t in processes]
@@ -64,11 +64,12 @@ def sjf_non_preemptive(processes):
         "cpu_utilization": (cpu_busy / current_time) * 100
     }
 
-result = sjf_non_preemptive(processes)
-print("\nGantt Chart:")
-for ent in result["timeline"]:
-    pid = ent["pid"] if ent["pid"] else "idle"
-    print(f"  {pid}: {ent['start']} --> {ent['end']}")
-print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
-print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
-print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")
+# if __name__ == '__main__':
+# result = sjf_non_preemptive(processes)
+# print("\nGantt Chart:")
+# for ent in result["timeline"]:
+#     pid = ent["pid"] if ent["pid"] else "idle"
+#     print(f"  {pid}: {ent['start']} --> {ent['end']}")
+# print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
+# print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
+# print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")

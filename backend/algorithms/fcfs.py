@@ -1,8 +1,8 @@
 # algorithms/fcfs.py
 
-gantt_chart = []
-processes = []
-process_count = 0
+# gantt_chart = []
+# processes = []
+# process_count = 0
 
 # while True:
 #     process_count += 1
@@ -77,7 +77,7 @@ def fcfs(processes):
     }
 
 if __name__ == '__main__':
-    result = fcfs(processes)
+    # result = fcfs(processes)
     print("\nGantt Chart:")
     for ent in result["timeline"]:
         pid = ent["pid"] if ent["pid"] else "idle"
