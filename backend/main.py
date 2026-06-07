@@ -24,3 +24,23 @@ def mock_schedule_result():
 @app.post("/schedule/fcfs", response_model=ScheduleResult)
 def schedule_fcfs(request: ScheduleResult):
     return mock_schedule_result()
+
+@app.post("/schedule/sjf_pre", response_model=ScheduleResult)
+def schedule_pre_sjf(request: ScheduleResult):
+    return mock_schedule_result()
+
+@app.post("/schedule/sjf_np", response_model=ScheduleResult)
+def schedule_np_sjf(request: ScheduleResult):
+    return mock_schedule_result()
+
+@app.post("/schedule/priority_pre", response_model=ScheduleResult)
+def schedule_np_sjf(request: ScheduleResult):
+    return mock_schedule_result()
+
+@app.post("/schedule/priority_np", response_model=ScheduleResult)
+def schedule_np_sjf(request: ScheduleResult):
+    return mock_schedule_result()
+
+@app.post("/schedule/round_robin", response_model=ScheduleResult)
+def schedule_np_sjf(request: ScheduleResult):
+    return mock_schedule_result()
