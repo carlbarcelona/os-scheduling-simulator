@@ -3,61 +3,72 @@ import streamlit as st
 import requests
 from config import *
 
-# ── Session state initialization ─────────────────────────────────────────────
+# -- Session state initialization
 if "processes" not in st.session_state:
     st.session_state.processes = []
 
 if "last_response" not in st.session_state:
     st.session_state.last_response = None
 
-# ── SIDEBAR ───────────────────────────────────────────────────────────────────
+# -- SIDEBAR
 st.sidebar.title("CPU Scheduling Simulator")
 
-# -- Algorithm selector
+# Algorithm selector
 algorithm = st.sidebar.selectbox(
     "Algorithm",
     ["FCFS", "SJF Non-Preemptive", "SJF Preemptive", "Round Robin", "Priority Non-Preemptive", "Priority Preemptive"]
 )
 
-# -- Quantum input (only for Round Robin)
+# Quantum input (only for Round Robin)
 quantum = None
 if algorithm == "Round Robin":
     quantum = st.sidebar.number_input("Quantum", min_value=1, step=1, value=2)
 
 st.sidebar.markdown("---")
 
-# -- Add process form
+# Add process form
 st.sidebar.subheader("Add Process")
 pid = st.sidebar.text_input("Process ID")
 arrival_time = st.sidebar.number_input("Arrival Time", min_value=0, step=1)
 burst_time = st.sidebar.number_input("Burst Time", min_value=1, step=1)
 
+# Priority input (only for Priority algorithms)
+priority = 0
+if algorithm in ["Priority Non-Preemptive", "Priority Preemptive"]:
+    priority = st.sidebar.number_input("Priority (lower = higher priority)", min_value=0, step=1, value=0)
+
 if st.sidebar.button("Add Process"):
-    st.session_state.processes.append({
+    process = {
         "pid": pid,
         "arrival_time": int(arrival_time),
         "burst_time": int(burst_time),
-    })
+    }
+    if algorithm in ["Priority Non-Preemptive", "Priority Preemptive"]:
+        process["priority"] = int(priority)
+    st.session_state.processes.append(process)
     st.rerun()
 
 st.sidebar.markdown("---")
 
-# -- Process list in sidebar
+# Process list in sidebar
 if st.session_state.processes:
     st.sidebar.subheader(f"Process Queue — {len(st.session_state.processes)} Processes")
     for p in st.session_state.processes:
-        st.sidebar.write(f"**{p['pid']}** | Arrival: {p['arrival_time']} | Burst: {p['burst_time']}")
+        if "priority" in p:
+            st.sidebar.write(f"**{p['pid']}** | Arrival: {p['arrival_time']} | Burst: {p['burst_time']} | Priority: {p['priority']}")
+        else:
+            st.sidebar.write(f"**{p['pid']}** | Arrival: {p['arrival_time']} | Burst: {p['burst_time']}")
 
 if st.sidebar.button("Clear All Processes"):
     st.session_state.processes = []
     st.session_state.last_response = None
     st.rerun()
 
-# ── MAIN AREA ─────────────────────────────────────────────────────────────────
+# -- MAIN AREA
 st.title("CPU Scheduling Simulator")
 st.write("Current processes:", st.session_state.processes)
 
-# ── Algorithm to endpoint mapping ─────────────────────────────────────────────
+# Algorithm to endpoint mapping
 ALGORITHM_MAP = {
     "FCFS": FCFS_API,
     "SJF Non-Preemptive": SJF_NP_API,
@@ -67,7 +78,7 @@ ALGORITHM_MAP = {
     "Priority Preemptive": PRIORITY_PRE_API,
 }
 
-# ── Run button ────────────────────────────────────────────────────────────────
+# Run button
 if st.button(f"Run {algorithm}"):
     if not st.session_state.processes:
         st.error("Add at least one process before running.")
@@ -102,7 +113,7 @@ if st.button(f"Run {algorithm}"):
                 st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.last_response = None
 
-# ── Results ───────────────────────────────────────────────────────────────────
+# Results
 if st.session_state.last_response is not None:
     st.markdown("---")
 
@@ -118,7 +129,7 @@ if st.session_state.last_response is not None:
     st.subheader("Raw API Response")
     st.json(st.session_state.last_response)
 
-# ── Compare Mode ──────────────────────────────────────────────────────────────
+# Compare Mode
 st.markdown("---")
 st.subheader("Compare Mode")
 st.info("Compare Mode coming in Week 2 — waiting for /analyze endpoint from Backend Architect.")
