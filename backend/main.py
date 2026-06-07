@@ -8,6 +8,8 @@ from schemas import (
 )
 
 from algorithms.fcfs import *
+from algorithms.sjf_nonpree import *
+from algorithms.sjf_pree import *
 
 app = FastAPI(title="CPU Scheduling Simulator")
 
@@ -32,11 +34,13 @@ def schedule_fcfs(request: ScheduleRequest):
 
 @app.post("/schedule/sjf_pre", response_model=ScheduleResult)
 def schedule_pre_sjf(request: ScheduleRequest):
-    return mock_schedule_result()
+    processes = [details.model_dump() for details in request.processes]
+    return sjf_preemptive(processes)
 
 @app.post("/schedule/sjf_np", response_model=ScheduleResult)
 def schedule_np_sjf(request: ScheduleRequest):
-    return mock_schedule_result()
+    processes = [details.model_dump() for details in request.processes]
+    return sjf_non_preemptive(processes)
 
 @app.post("/schedule/priority_pre", response_model=ScheduleResult)
 def schedule_np_sjf(request: ScheduleRequest):
