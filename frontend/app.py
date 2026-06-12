@@ -157,6 +157,61 @@ if st.session_state.last_response is not None:
 
     st.markdown("---")
 
+    # Per-process metrics table
+    # NOTE: This is a TEMPORARY frontend-side calculation.
+    # The backend (ScheduleResult/ScheduledProcess in schemas.py) currently only
+    # returns avg_waiting_time / avg_turnaround_time / cpu_utilization, not
+    # per-process waiting/turnaround values — even though the algorithm
+    # functions compute these internally before returning.
+    # Ideally, the backend should expose per-process "waiting" and "turnaround"
+    # fields in ScheduledProcess so the frontend only displays, not computes.
+    # Flagged to Architect/Algorithm Engineer for schemas.py update.
+    st.subheader("Process Metrics")
+
+    schedule = result.get("schedule", [])
+    process_lookup = {p["pid"]: p for p in st.session_state.processes}
+
+    table_rows = []
+    total_waiting = 0
+    total_turnaround = 0
+    for entry in schedule:
+        pid = entry["pid"]
+        start = entry["start"]
+        finish = entry["end"]
+        proc = process_lookup.get(pid, {})
+        arrival = proc.get("arrival_time", 0)
+        burst = proc.get("burst_time", finish - start)
+        turnaround = finish - arrival
+        waiting = turnaround - burst
+        total_waiting += waiting
+        total_turnaround += turnaround
+        table_rows.append({
+            "PID": pid,
+            "Arrival": arrival,
+            "Burst": burst,
+            "Start": start,
+            "Finish": finish,
+            "Waiting": waiting,
+            "Turnaround": turnaround,
+        })
+
+    if table_rows:
+        n = len(table_rows)
+        table_rows.append({
+            "PID": "AVG",
+            "Arrival": "",
+            "Burst": "",
+            "Start": "",
+            "Finish": "",
+            "Waiting": round(total_waiting / n, 2),
+            "Turnaround": round(total_turnaround / n, 2),
+        })
+        st.dataframe(table_rows, use_container_width=True)
+    else:
+        st.info("No schedule data to display.")
+
+    st.markdown("---")
+
     # Gantt chart placeholder — waiting for Visualizer to deliver components/gantt.py
     st.subheader("Gantt Chart")
     st.info("Gantt chart coming soon — waiting for Visualizer to deliver components/gantt.py")
