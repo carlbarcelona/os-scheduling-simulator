@@ -1,6 +1,7 @@
 # frontend/app.py
 import streamlit as st
 import requests
+import json
 from config import *
 
 # -- Session state initialization
@@ -9,6 +10,9 @@ if "processes" not in st.session_state:
 
 if "last_response" not in st.session_state:
     st.session_state.last_response = None
+
+if "compare_results" not in st.session_state:
+    st.session_state.compare_results = None
 
 # -- SIDEBAR
 st.sidebar.title("CPU Scheduling Simulator")
@@ -62,6 +66,7 @@ if st.session_state.processes:
 if st.sidebar.button("Clear All Processes"):
     st.session_state.processes = []
     st.session_state.last_response = None
+    st.session_state.compare_results = None
     st.rerun()
 
 # -- MAIN AREA
@@ -69,6 +74,7 @@ st.title("CPU Scheduling Simulator")
 st.write("Current processes:", st.session_state.processes)
 
 # Algorithm to endpoint mapping
+ANALYZE_API = f"{API_BASE}/analyze"
 ALGORITHM_MAP = {
     "FCFS": FCFS_API,
     "SJF Non-Preemptive": SJF_NP_API,
@@ -78,24 +84,32 @@ ALGORITHM_MAP = {
     "Priority Preemptive": PRIORITY_PRE_API,
 }
 
+
+# -- Cached API call wrapper (Week 3: @st.cache_data)
+# processes_json is json.dumps(processes) — hashable for cache key
+@st.cache_data
+def run_simulation(endpoint: str, processes_json: str, quantum_value=None):
+    payload = {"processes": json.loads(processes_json)}
+    if quantum_value is not None:
+        payload["quantum"] = quantum_value
+    response = requests.post(endpoint, json=payload, timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
 # Run button
 if st.button(f"Run {algorithm}"):
     if not st.session_state.processes:
         st.error("Add at least one process before running.")
     else:
-        payload = {"processes": st.session_state.processes}
-        if algorithm == "Round Robin" and quantum:
-            payload["quantum"] = int(quantum)
+        processes_json = json.dumps(st.session_state.processes)
+        q = int(quantum) if (algorithm == "Round Robin" and quantum) else None
 
         with st.spinner("Simulating..."):
             try:
-                response = requests.post(
-                    ALGORITHM_MAP[algorithm],
-                    json=payload,
-                    timeout=10,
+                st.session_state.last_response = run_simulation(
+                    ALGORITHM_MAP[algorithm], processes_json, q
                 )
-                response.raise_for_status()
-                st.session_state.last_response = response.json()
 
             except requests.exceptions.Timeout:
                 st.error("Request timed out. Is the backend running?")
@@ -117,22 +131,85 @@ if st.button(f"Run {algorithm}"):
 if st.session_state.last_response is not None:
     st.markdown("---")
 
+    result = st.session_state.last_response
+
+    # Metrics row with tooltips (Week 3)
+    st.subheader("Metrics")
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.metric(
+            "Avg Waiting Time",
+            f"{result.get('avg_waiting_time', 0):.2f}",
+            help="Average time each process spends waiting in the ready queue before execution."
+        )
+    with m2:
+        st.metric(
+            "Avg Turnaround Time",
+            f"{result.get('avg_turnaround_time', 0):.2f}",
+            help="Average total time from process arrival to completion (waiting + execution)."
+        )
+    with m3:
+        st.metric(
+            "CPU Utilization",
+            f"{result.get('cpu_utilization', 0):.2f}%",
+            help="Percentage of total time the CPU was actively executing a process (not idle)."
+        )
+
+    st.markdown("---")
+
     # Gantt chart placeholder — waiting for Visualizer to deliver components/gantt.py
     st.subheader("Gantt Chart")
-    st.info("Gantt chart coming in Week 2 — waiting for Visualizer to deliver components/gantt.py")
+    st.info("Gantt chart coming soon — waiting for Visualizer to deliver components/gantt.py")
     # from components.gantt import render_gantt
-    # st.plotly_chart(render_gantt(st.session_state.last_response["timeline"], st.session_state.last_response["schedule"]))
+    # st.plotly_chart(render_gantt(result["timeline"], result["schedule"]))
 
     st.markdown("---")
 
     # Raw response
     st.subheader("Raw API Response")
-    st.json(st.session_state.last_response)
+    st.json(result)
 
-# Compare Mode
+# -- Compare Mode (Week 2)
 st.markdown("---")
 st.subheader("Compare Mode")
-st.info("Compare Mode coming in Week 2 — waiting for /analyze endpoint from Backend Architect.")
-# col1, col2, col3, col4 = st.columns(4)
-# response = requests.post(ANALYZE_API, json={"processes": st.session_state.processes}, timeout=10)
-# results = response.json()
+
+if st.button("Run Compare Mode"):
+    if not st.session_state.processes:
+        st.error("Add at least one process before running Compare Mode.")
+    else:
+        with st.spinner("Running comparison..."):
+            try:
+                response = requests.post(
+                    ANALYZE_API,
+                    json={"processes": st.session_state.processes},
+                    timeout=10,
+                )
+                response.raise_for_status()
+                st.session_state.compare_results = response.json()
+
+            except requests.exceptions.Timeout:
+                st.error("Request timed out. Is the backend running?")
+                st.session_state.compare_results = None
+
+            except requests.exceptions.HTTPError as e:
+                try:
+                    detail = e.response.json().get("detail", str(e))
+                except Exception:
+                    detail = str(e)
+                st.error(f"API error: {detail}")
+                st.session_state.compare_results = None
+
+            except requests.exceptions.ConnectionError:
+                st.error("Cannot connect to the API. Is the backend running? (/analyze endpoint pending from Backend Architect)")
+                st.session_state.compare_results = None
+
+if st.session_state.compare_results is not None:
+    results = st.session_state.compare_results.get("results", {})
+    cols = st.columns(4)
+    algo_names = list(results.keys())[:4]
+    for col, name in zip(cols, algo_names):
+        with col:
+            st.markdown(f"**{name.upper()}**")
+            st.json(results[name])
+else:
+    st.info("Compare Mode results will display here as 4 columns once /analyze is available from Backend Architect.")
