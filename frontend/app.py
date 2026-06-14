@@ -6,7 +6,7 @@ from config import *
 
 # -- Page config (must be first Streamlit call)
 st.set_page_config(
-    page_title="CPU Scheduling Simulator",
+    page_title="OS Scheduling Simulator",
     page_icon="⚙️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -26,7 +26,7 @@ if "compare_results" not in st.session_state:
     st.session_state.compare_results = None
 
 # -- SIDEBAR NAVIGATION
-st.sidebar.title("⚙️ CPU Scheduling Simulator")
+st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
 page = st.sidebar.radio(
     "Navigate",
@@ -103,11 +103,18 @@ if page == "Scheduler":
     # Process list in sidebar
     if st.session_state.processes:
         st.sidebar.subheader(f"Process Queue — {len(st.session_state.processes)}")
-        for p in st.session_state.processes:
-            if "priority" in p:
-                st.sidebar.caption(f"**{p['pid']}** · AT:{p['arrival_time']} · BT:{p['burst_time']} · PR:{p['priority']}")
-            else:
-                st.sidebar.caption(f"**{p['pid']}** · AT:{p['arrival_time']} · BT:{p['burst_time']}")
+        for i, p in enumerate(st.session_state.processes):
+            col_info, col_del = st.sidebar.columns([4, 1])
+            with col_info:
+                if "priority" in p:
+                    st.caption(f"**{p['pid']}** · AT:{p['arrival_time']} · BT:{p['burst_time']} · PR:{p['priority']}")
+                else:
+                    st.caption(f"**{p['pid']}** · AT:{p['arrival_time']} · BT:{p['burst_time']}")
+            with col_del:
+                if st.button("✕", key=f"del_{i}", help=f"Remove {p['pid']}"):
+                    st.session_state.processes.pop(i)
+                    st.session_state.last_response = None
+                    st.rerun()
 
         if st.sidebar.button("🗑️ Clear All", use_container_width=True):
             st.session_state.processes = []
@@ -116,7 +123,7 @@ if page == "Scheduler":
             st.rerun()
 
     # -- MAIN AREA
-    st.title("CPU Scheduling Simulator")
+    st.title("CPU Scheduler")
     st.caption(f"Algorithm: **{algorithm}** · Processes: **{len(st.session_state.processes)}**")
 
     st.divider()
