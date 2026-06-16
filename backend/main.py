@@ -1,36 +1,33 @@
 # main.py
-
 from fastapi import FastAPI
-from schemas import (
-    ScheduleRequest, ScheduleResult,
-    BankersRequest, BankersResult,
-    AnalyzeResult, RecommendResult
-)
+from schemas import *
 
-from algorithms.fcfs import *
-from algorithms.sjf_nonpree import *
-from algorithms.sjf_pree import *
-from algorithms.priority_pree import*
-from algorithms.priority_nonpree import *
-from algorithms.round_robin import *
+# For CPU Scheduling
+from algorithms.cpu_scheduling.fcfs import fcfs
+from algorithms.cpu_scheduling.sjf_nonpree import sjf_non_preemptive
+from algorithms.cpu_scheduling.sjf_pree import sjf_preemptive
+from algorithms.cpu_scheduling.priority_pree import priority_preemptive
+from algorithms.cpu_scheduling.priority_nonpree import priority_non_preemptive
+from algorithms.cpu_scheduling.round_robin import round_robin
+from algorithms.cpu_scheduling.mlfq import mlfq
 
+# For Mass Storage
+from algorithms.mass_storage.fcfs_disk import fcfs_disk
+from algorithms.mass_storage.c_look import clook_disk
+from algorithms.mass_storage.c_scan_disk import cscan_disk
+from algorithms.mass_storage.look_disk import look_disk
+from algorithms.mass_storage.scan_disk import scan_disk
 
 app = FastAPI(title="CPU Scheduling Simulator")
 
 @app.get("/")
 def root():
     return {"status": "ok",
-    "message": "CPU Scheduling Simulator Up and Running"}
+    "message": "OS Simulator Up and Running"}
 
-def mock_schedule_result():
-    return {
-        "schedule": [{"pid": "P1", "start": 0, "end": 8}],
-        "timeline": [{"type": "process", "pid": "P1", "start": 0, "end": 8}],
-        "avg_waiting_time": 0.0,
-        "avg_turnaround_time": 8.0,
-        "cpu_utilization": 100.0
-    }
-
+# ─────────────────────────────────────────
+# CPU SCHEDULING
+# ─────────────────────────────────────────
 @app.post("/schedule/fcfs", response_model=ScheduleResult)
 def schedule_fcfs(request: ScheduleRequest):
     processes = [details.model_dump() for details in request.processes]
@@ -60,3 +57,63 @@ def schedule_np_sjf(request: ScheduleRequest):
 def schedule_np_sjf(request: ScheduleRequest):
     processes = [details.model_dump() for details in request.processes]
     return round_robin(processes)
+
+@app.post("/schedule/analyze", response_model=ScheduleAnalyzeResult)
+def disk_analyze(request: ScheduleRequest):
+    """Runs all disk algorithms on the same input for comparison."""
+    pass # Empty
+
+# ─────────────────────────────────────────
+# MASS STORAGE — DISK SCHEDULING
+# ─────────────────────────────────────────
+
+@app.post("/disk/fcfs", response_model=DiskResult)
+def disk_fcfs(request: DiskRequest):
+    return fcfs_disk(
+        head = request.head,
+        requests = request.requests,
+    )
+
+@app.post("/disk/sstf", response_model=DiskResult)
+def disk_sstf(request: DiskRequest):
+    pass # Empty
+ 
+ 
+@app.post("/disk/scan", response_model=DiskResult)
+def disk_scan(request: DiskRequest):
+    return scan_disk(
+        head = request.head,
+        requests = request.requests,
+        direction = request.direction,
+        number_of_tracks = request.number_of_tracks,
+    )
+ 
+@app.post("/disk/cscan", response_model=DiskResult)
+def disk_cscan(request: DiskRequest):
+    return cscan_disk(
+        head  = request.head,
+        requests = request.requests,
+        direction  = request.direction,
+        number_of_tracks = request.number_of_tracks,
+    )
+ 
+@app.post("/disk/look", response_model=DiskResult)
+def disk_look(request: DiskRequest):
+    return look_disk(
+        head = request.head,
+        requests = request.requests,
+        direction = request.direction,
+    )
+ 
+@app.post("/disk/clook", response_model=DiskResult)
+def disk_clook(request: DiskRequest):
+    return clook_disk(
+        head      = request.head,
+        requests  = request.requests,
+        direction = request.direction,
+    )
+
+@app.post("/disk/analyze", response_model=DiskAnalyzeResult)
+def disk_analyze(request: DiskRequest):
+    """Runs all disk algorithms on the same input for comparison."""
+    pass # Empty
