@@ -1,3 +1,5 @@
+from functools import reduce
+
 pages = []
 print("Enter page reference string (type 'done' to stop):")
 while True:
@@ -5,54 +7,44 @@ while True:
     if page.lower() == "done":
         break
     pages.append(int(page))
-
 frames = int(input("Enter number of frames: "))
 
-def lfu_pra(pages, frames):
-    frame_list = []
-    freq = {}
-    page_faults = 0
-    timeline = []
+data = {"pages": pages, "frames": frames}
 
-    for page in pages:
-        fault = False
-        freq[page] = freq.get(page, 0) + 1
+def lfu_pra(data):
+    pages, frames = data["pages"], data["frames"]
 
-        if page not in frame_list:
-            page_faults += 1
-            fault = True
-            if len(frame_list) < frames:
-                frame_list.append(page)
-            else:
-                # Remove least frequently used
-                lfu_page = min(frame_list, key=lambda p: freq[p])
-                frame_list[frame_list.index(lfu_page)] = page
+    def process_page(acc, page):
+        frame_list, freq, timeline, faults = acc
+        new_freq = {**freq, page: freq.get(page, 0) + 1}
 
-        timeline.append({
-            "page": page,
-            "frames": frame_list.copy(),
-            "frequencies": {p: freq[p] for p in frame_list},
-            "fault": fault
-        })
+        if page in frame_list:
+            return frame_list, new_freq, timeline + [{"page": page, "frames_state": frame_list.copy(), "fault": False, "frequencies": {p: new_freq[p] for p in frame_list}}], faults
 
+        if len(frame_list) < frames:
+            new_frames = frame_list + [page]
+        else:
+            # Only consider frequencies of pages currently in frame
+            victim = min(frame_list, key=lambda p: new_freq.get(p, 0))
+            new_frames = [page if p == victim else p for p in frame_list]
+
+        return new_frames, new_freq, timeline + [{"page": page, "frames_state": new_frames.copy(), "fault": True, "frequencies": {p: new_freq[p] for p in new_frames}}], faults + 1
+
+    _, _, timeline, faults = reduce(process_page, pages, ([], {}, [], 0))
     return {
-        "algorithm": "LFU (Counting Based)",
         "frames": frames,
         "pages": pages,
         "timeline": timeline,
-        "page_fault_count": page_faults
+        "page_fault_count": faults,
+        "page_fault_rate": round(faults / len(pages), 2)
     }
 
-def print_pra_result(result):
-    print(f"\n=== {result['algorithm']} ===")
-    print(f"Frames: {result['frames']} | Page Fault Count: {result['page_fault_count']}")
-    print(f"\n{'Page':<6} {'Frames':<30} {'Frequencies':<25} {'Fault'}")
-    print("-" * 70)
-    for entry in result["timeline"]:
-        frames_str = str(entry["frames"])
-        freq_str = str(entry.get("frequencies", ""))
-        fault_str = "✗ FAULT" if entry["fault"] else "✓"
-        print(f"{entry['page']:<6} {frames_str:<30} {freq_str:<25} {fault_str}")
-
-result = lfu_pra(pages, frames)
-print_pra_result(result)
+result = lfu_pra(data)
+print(f"\n=== LFU Page Replacement ===")
+print(f"Frames: {result['frames']} | Pages: {result['pages']}")
+print(f"\n{'Page':<6} {'Frames State':<30} {'Frequencies':<25} {'Fault'}")
+print("-" * 75)
+for entry in result["timeline"]:
+    print(f"  {entry['page']:<6} {str(entry['frames_state']):<30} {str(entry['frequencies']):<25} {'✗ FAULT' if entry['fault'] else '✓ HIT'}")
+print(f"\nPage Fault Count: {result['page_fault_count']}")
+print(f"Page Fault Rate:  {result['page_fault_rate']}")

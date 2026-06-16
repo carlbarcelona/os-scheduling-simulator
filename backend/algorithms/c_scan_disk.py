@@ -1,5 +1,5 @@
 head = int(input("Enter initial head position: "))
-disk_size = int(input("Enter disk size: "))
+number_of_tracks = int(input("Enter number of tracks: "))
 direction = input("Enter direction (left/right): ").lower()
 requests = []
 print("Enter disk request queue (type 'done' to stop):")
@@ -9,30 +9,33 @@ while True:
         break
     requests.append(int(r))
 
-def cscan_disk(head, disk_size, requests, direction):
-    left = sorted([r for r in requests if r < head], reverse=True)
-    right = sorted([r for r in requests if r >= head])
-    sequence = [head]
+data = {"head": head, "number_of_tracks": number_of_tracks, "requests": requests, "direction": direction}
 
-    if direction == "right":
-        sequence += right + [disk_size - 1, 0] + sorted(left)
-    else:
-        sequence += left + [0, disk_size - 1] + sorted(right, reverse=True)
-
-    total_movement = sum(abs(sequence[i] - sequence[i-1]) for i in range(1, len(sequence)))
-    movements = [f"{sequence[i]}→{sequence[i+1]}" for i in range(len(sequence)-1)]
-
+def build_disk_result(head, sequence):
+    movements = [
+        {"from_cylinder": sequence[i], "to_cylinder": sequence[i+1], "distance": abs(sequence[i+1] - sequence[i]) if sequence[i] != "?" and sequence[i+1] != "?" else "?"}
+        for i in range(len(sequence)-1)
+    ]
     return {
-        "algorithm": "C-SCAN Disk Scheduling",
         "initial_head": head,
-        "direction": direction,
         "sequence": sequence,
         "movements": movements,
-        "total_head_movement": total_movement
+        "total_head_movement": sum(m["distance"] for m in movements if m["distance"] != "?")
     }
 
-result = cscan_disk(head, disk_size, requests, direction)
-print(f"\n=== {result['algorithm']} ===")
-print(f"Head Movement: {' → '.join(map(str, result['sequence']))}")
-print(f"Movements: {', '.join(result['movements'])}")
-print(f"Total Head Movement: {result['total_head_movement']}")
+def cscan_disk(data):
+    head, requests, direction = data["head"], data["requests"], data["direction"]
+    left = sorted([r for r in requests if r < head])
+    right = sorted([r for r in requests if r >= head])
+    sequence = [head] + (right + ["?", "?"] + left if direction == "right" else list(reversed(left)) + ["?", "?"] + list(reversed(right)))
+    return build_disk_result(head, sequence)
+
+result = cscan_disk(data)
+print(f"\n=== C-SCAN Disk Scheduling ===")
+print(f"Initial Head: {result['initial_head']}")
+print(f"Sequence: {' → '.join(map(str, result['sequence']))}")
+print(f"\n{'From':<12} {'To':<12} {'Distance'}")
+print("-" * 35)
+for m in result["movements"]:
+    print(f"  {str(m['from_cylinder']):<12} {str(m['to_cylinder']):<12} {str(m['distance'])}")
+print(f"\nTotal Head Movement: {result['total_head_movement']} (excluding border traversal)")

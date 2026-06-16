@@ -1,4 +1,5 @@
 head = int(input("Enter initial head position: "))
+number_of_tracks = int(input("Enter number of tracks: "))
 direction = input("Enter direction (left/right): ").lower()
 requests = []
 print("Enter disk request queue (type 'done' to stop):")
@@ -8,31 +9,33 @@ while True:
         break
     requests.append(int(r))
 
-def clook_disk(head, requests, direction):
-    left = sorted([r for r in requests if r < head], reverse=True)
-    right = sorted([r for r in requests if r >= head])
-    sequence = [head]
+data = {"head": head, "number_of_tracks": number_of_tracks, "requests": requests, "direction": direction}
 
-    # C-LOOK jumps back to the smallest/largest request, not disk end
-    if direction == "right":
-        sequence += right + sorted(left)
-    else:
-        sequence += left + sorted(right, reverse=True)
-
-    total_movement = sum(abs(sequence[i] - sequence[i-1]) for i in range(1, len(sequence)))
-    movements = [f"{sequence[i]}→{sequence[i+1]}" for i in range(len(sequence)-1)]
-
+def build_disk_result(head, sequence):
+    movements = [
+        {"from_cylinder": sequence[i], "to_cylinder": sequence[i+1], "distance": abs(sequence[i+1] - sequence[i])}
+        for i in range(len(sequence)-1)
+    ]
     return {
-        "algorithm": "C-LOOK Disk Scheduling",
         "initial_head": head,
-        "direction": direction,
         "sequence": sequence,
         "movements": movements,
-        "total_head_movement": total_movement
+        "total_head_movement": sum(m["distance"] for m in movements)
     }
 
-result = clook_disk(head, requests, direction)
-print(f"\n=== {result['algorithm']} ===")
-print(f"Head Movement: {' → '.join(map(str, result['sequence']))}")
-print(f"Movements: {', '.join(result['movements'])}")
-print(f"Total Head Movement: {result['total_head_movement']}")
+def clook_disk(data):
+    head, requests, direction = data["head"], data["requests"], data["direction"]
+    left = sorted([r for r in requests if r < head])
+    right = sorted([r for r in requests if r >= head])
+    sequence = [head] + (right + left if direction == "right" else list(reversed(left)) + list(reversed(right)))
+    return build_disk_result(head, sequence)
+
+result = clook_disk(data)
+print(f"\n=== C-LOOK Disk Scheduling ===")
+print(f"Initial Head: {result['initial_head']}")
+print(f"Sequence: {' → '.join(map(str, result['sequence']))}")
+print(f"\n{'From':<12} {'To':<12} {'Distance'}")
+print("-" * 35)
+for m in result["movements"]:
+    print(f"  {str(m['from_cylinder']):<12} {str(m['to_cylinder']):<12} {str(m['distance'])}")
+print(f"\nTotal Head Movement: {result['total_head_movement']}")
