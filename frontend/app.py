@@ -438,6 +438,35 @@ elif page == "Mass Storage":
                 )
 
             st.divider()
+
+            # Seek pattern visualization — Plotly line chart
+            st.subheader("Seek Pattern")
+            sequence = disk_result.get("sequence", [])
+            if sequence:
+                import plotly.graph_objects as go
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=list(range(len(sequence))),
+                    y=sequence,
+                    mode="lines+markers",
+                    name="Head Position",
+                    line=dict(color="#00ff9d", width=2),
+                    marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                ))
+                fig.update_layout(
+                    xaxis_title="Step",
+                    yaxis_title="Cylinder Position",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e"),
+                    showlegend=False,
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
             st.subheader("Service Sequence")
             st.dataframe(
                 {"Sequence": disk_result.get("sequence", [])},
