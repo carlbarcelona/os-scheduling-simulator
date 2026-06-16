@@ -12,9 +12,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# -- ANALYZE_API (not yet in config.py - flagged to Architect for addition)
-ANALYZE_API = f"{API_BASE}/analyze"
-
 # -- Session state initialization
 if "processes" not in st.session_state:
     st.session_state.processes = []
@@ -25,12 +22,15 @@ if "last_response" not in st.session_state:
 if "compare_results" not in st.session_state:
     st.session_state.compare_results = None
 
+if "disk_response" not in st.session_state:
+    st.session_state.disk_response = None
+
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
 page = st.sidebar.radio(
     "Navigate",
-    ["Scheduler", "Memory", "Compare", "Recommend", "Deadlock"],
+    ["Scheduler", "Mass Storage", "Memory", "Compare", "Recommend", "Deadlock"],
     label_visibility="collapsed"
 )
 
@@ -125,7 +125,6 @@ if page == "Scheduler":
     # -- MAIN AREA
     st.title("CPU Scheduler")
     st.caption(f"Algorithm: **{algorithm}** · Processes: **{len(st.session_state.processes)}**")
-
     st.divider()
 
     # Algorithm to endpoint mapping
@@ -207,14 +206,11 @@ if page == "Scheduler":
     # Results
     if st.session_state.last_response is not None:
         st.divider()
-
         result = st.session_state.last_response
 
-        # Tabs for results sections
         tab_metrics, tab_gantt, tab_raw = st.tabs(["Metrics", "Gantt Chart", "Raw Response"])
 
         with tab_metrics:
-            # Metrics row with tooltips (Week 3)
             m1, m2, m3 = st.columns(3)
             with m1:
                 st.metric(
@@ -298,6 +294,168 @@ if page == "Scheduler":
             st.json(result)
 
 # -------------------------------------------------------------
+# PAGE: MASS STORAGE
+# -------------------------------------------------------------
+elif page == "Mass Storage":
+    st.title("Mass Storage — Disk Scheduling")
+    st.caption("Module 7 — Disk head scheduling algorithms")
+    st.divider()
+
+    # Sidebar inputs for Mass Storage
+    st.sidebar.subheader("Disk Parameters")
+
+    disk_algorithm = st.sidebar.selectbox(
+        "Algorithm",
+        ["FCFS", "SSTF", "SCAN", "C-SCAN", "LOOK", "C-LOOK"],
+        help="Select the disk scheduling algorithm."
+    )
+
+    head = st.sidebar.number_input(
+        "Initial Head Position",
+        min_value=0, step=1, value=53,
+        help="Starting position of the disk head."
+    )
+
+    number_of_tracks = st.sidebar.number_input(
+        "Number of Tracks",
+        min_value=1, step=1, value=200,
+        help="Total number of cylinders on the disk."
+    )
+
+    direction = st.sidebar.selectbox(
+        "Direction",
+        ["right", "left"],
+        help="Initial direction of head movement. Used by SCAN, C-SCAN, LOOK, C-LOOK."
+    )
+
+    st.sidebar.divider()
+    st.sidebar.subheader("Disk Requests")
+    st.sidebar.caption("Enter cylinder numbers separated by commas.")
+    requests_input = st.sidebar.text_input(
+        "Requests",
+        value="98, 183, 37, 122, 14, 124, 65, 67",
+        placeholder="e.g. 98, 183, 37, 122",
+        label_visibility="collapsed"
+    )
+
+    # Disk algorithm to endpoint mapping
+    DISK_ALGORITHM_MAP = {
+        "FCFS": DISK_FCFS_API,
+        "SSTF": DISK_SSTF_API,
+        "SCAN": DISK_SCAN_API,
+        "C-SCAN": DISK_CSCAN_API,
+        "LOOK": DISK_LOOK_API,
+        "C-LOOK": DISK_CLOOK_API,
+    }
+
+    # Main area
+    st.subheader(f"Algorithm: {disk_algorithm}")
+
+    col_params, col_run = st.columns([3, 1])
+
+    with col_params:
+        try:
+            requests_list = [int(r.strip()) for r in requests_input.split(",") if r.strip()]
+            st.dataframe(
+                {"Cylinder Requests": requests_list},
+                use_container_width=True,
+                hide_index=True,
+            )
+        except ValueError:
+            st.error("Invalid input — enter comma-separated integers only.")
+            requests_list = []
+
+    with col_run:
+        st.write("")
+        disk_run_clicked = st.button(
+            f"▶ Run {disk_algorithm}",
+            use_container_width=True,
+            type="primary",
+            disabled=len(requests_list) == 0,
+        )
+
+    if disk_run_clicked:
+        payload = {
+            "head": int(head),
+            "requests": requests_list,
+            "number_of_tracks": int(number_of_tracks),
+            "direction": direction,
+        }
+
+        with st.status(f"Running {disk_algorithm}...", expanded=True) as status:
+            try:
+                st.write("Sending request to API...")
+                response = requests.post(
+                    DISK_ALGORITHM_MAP[disk_algorithm],
+                    json=payload,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                st.session_state.disk_response = response.json()
+                st.write("Response received.")
+                status.update(label="Simulation complete!", state="complete", expanded=False)
+                st.toast("Simulation complete!", icon="✅")
+
+            except requests.exceptions.Timeout:
+                status.update(label="Request timed out.", state="error", expanded=False)
+                st.error("Request timed out. Is the backend running?")
+                st.session_state.disk_response = None
+
+            except requests.exceptions.HTTPError as e:
+                try:
+                    detail = e.response.json().get("detail", str(e))
+                except Exception:
+                    detail = str(e)
+                status.update(label="API error.", state="error", expanded=False)
+                st.error(f"API error: {detail}")
+                st.session_state.disk_response = None
+
+            except requests.exceptions.ConnectionError:
+                status.update(label="Cannot connect to API.", state="error", expanded=False)
+                st.error("Cannot connect to the API. Is the backend running?")
+                st.session_state.disk_response = None
+
+    # Disk Results
+    if st.session_state.disk_response is not None:
+        st.divider()
+        disk_result = st.session_state.disk_response
+
+        tab_summary, tab_movements, tab_raw = st.tabs(["Summary", "Head Movements", "Raw Response"])
+
+        with tab_summary:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric(
+                    "Total Head Movement",
+                    f"{disk_result.get('total_head_movement', 0)}",
+                    help="Total distance the disk head traveled to service all requests."
+                )
+            with c2:
+                st.metric(
+                    "Initial Head Position",
+                    f"{disk_result.get('initial_head', 0)}",
+                    help="Starting position of the disk head."
+                )
+
+            st.divider()
+            st.subheader("Service Sequence")
+            st.dataframe(
+                {"Sequence": disk_result.get("sequence", [])},
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        with tab_movements:
+            movements = disk_result.get("movements", [])
+            if movements:
+                st.dataframe(movements, use_container_width=True, hide_index=True)
+            else:
+                st.info("No movement data available.")
+
+        with tab_raw:
+            st.json(disk_result)
+
+# -------------------------------------------------------------
 # PAGE: MEMORY
 # -------------------------------------------------------------
 elif page == "Memory":
@@ -326,9 +484,9 @@ elif page == "Compare":
     if st.button("▶ Run Compare Mode", type="primary", disabled=len(st.session_state.processes) == 0):
         with st.status("Running comparison...", expanded=True) as status:
             try:
-                st.write("Sending request to /analyze...")
+                st.write("Sending request to /schedule/analyze...")
                 response = requests.post(
-                    ANALYZE_API,
+                    SCHEDULE_ANALYZE_API,
                     json={"processes": st.session_state.processes},
                     timeout=10,
                 )
@@ -353,7 +511,7 @@ elif page == "Compare":
 
             except requests.exceptions.ConnectionError:
                 status.update(label="Cannot connect to API.", state="error", expanded=False)
-                st.error("Cannot connect to the API. Is the backend running? (/analyze endpoint pending from Backend Architect)")
+                st.error("Cannot connect to the API. Is the backend running? (/schedule/analyze endpoint pending from Backend Architect)")
                 st.session_state.compare_results = None
 
     if st.session_state.compare_results is not None:
@@ -365,7 +523,7 @@ elif page == "Compare":
                 st.markdown(f"**{name.upper()}**")
                 st.json(results[name])
     else:
-        st.info("Compare Mode results will display here as 4 columns once /analyze is available from Backend Architect.")
+        st.info("Compare Mode results will display here as 4 columns once /schedule/analyze is available from Backend Architect.")
 
 # -------------------------------------------------------------
 # PAGE: RECOMMEND
