@@ -72,6 +72,7 @@ def disk_fcfs(request: DiskRequest):
     return fcfs_disk(
         head = request.head,
         requests = request.requests,
+        number_of_tracks = request.number_of_tracks,
     )
 
 @app.post("/disk/sstf", response_model=DiskResult)
@@ -103,6 +104,7 @@ def disk_look(request: DiskRequest):
         head = request.head,
         requests = request.requests,
         direction = request.direction,
+        number_of_tracks = request.number_of_tracks,
     )
  
 @app.post("/disk/clook", response_model=DiskResult)
@@ -111,6 +113,7 @@ def disk_clook(request: DiskRequest):
         head      = request.head,
         requests  = request.requests,
         direction = request.direction,
+        number_of_tracks = request.number_of_tracks,
     )
 
 @app.post("/disk/analyze", response_model=DiskAnalyzeResult)
