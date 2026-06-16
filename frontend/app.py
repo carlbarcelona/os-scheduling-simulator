@@ -291,10 +291,8 @@ if page == "Scheduler":
                 st.info("No schedule data to display.")
 
         with tab_gantt:
-            # Gantt chart placeholder - waiting for Visualizer to deliver components/gantt.py
-            st.info("Gantt chart coming soon - waiting for Visualizer to deliver components/gantt.py")
-            # from components.gantt import render_gantt
-            # st.plotly_chart(render_gantt(result["timeline"], result["schedule"]))
+            from components.gantt import render_gantt
+            st.plotly_chart(render_gantt(result["timeline"], result["schedule"]), use_container_width=True)
 
         with tab_raw:
             st.json(result)
