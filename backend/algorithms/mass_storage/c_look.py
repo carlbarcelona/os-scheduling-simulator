@@ -1,12 +1,4 @@
-head = int(input("Enter initial head position: "))
-direction = input("Enter direction (left/right): ").lower()
-requests = []
-print("Enter disk request queue (type 'done' to stop):")
-while True:
-    r = input("Enter request: ")
-    if r.lower() == "done":
-        break
-    requests.append(int(r))
+
 
 def clook_disk(head, requests, direction):
     left = sorted([r for r in requests if r < head], reverse=True)
@@ -31,8 +23,3 @@ def clook_disk(head, requests, direction):
         "total_head_movement": total_movement
     }
 
-result = clook_disk(head, requests, direction)
-print(f"\n=== {result['algorithm']} ===")
-print(f"Head Movement: {' → '.join(map(str, result['sequence']))}")
-print(f"Movements: {', '.join(result['movements'])}")
-print(f"Total Head Movement: {result['total_head_movement']}")
