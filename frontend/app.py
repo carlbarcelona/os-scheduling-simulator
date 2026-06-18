@@ -623,7 +623,7 @@ elif page == "Memory":
         st.divider()
         mem_result = st.session_state.memory_response
 
-        tab_summary, tab_timeline, tab_raw = st.tabs(["Summary", "Timeline", "Raw Response"])
+        tab_summary, tab_memory_map, tab_timeline, tab_raw = st.tabs(["Summary", "Memory Map", "Timeline", "Raw Response"])
 
         with tab_summary:
             c1, c2, c3 = st.columns(3)
@@ -666,6 +666,122 @@ elif page == "Memory":
                 if retry:
                     st.subheader("Retry Allocated (after compaction)")
                     st.dataframe({"PID": retry}, use_container_width=True, hide_index=True)
+
+        with tab_memory_map:
+            # Memory block visualization — vertical stacked columns per snapshot
+            # Each column = one timeline snapshot, blocks stacked bottom (addr 0) to top (total_memory)
+            # Matches standard OS textbook MVT visualization
+            st.subheader("Memory State Snapshots")
+            st.caption("Each column is a memory snapshot. Blocks stack from address 0 (bottom) upward.")
+
+            timeline = mem_result.get("timeline", [])
+            total_mem = mem_result.get("total_memory", 1024)
+
+            if timeline:
+                import plotly.graph_objects as go
+
+                # Collect all unique PIDs for consistent color assignment
+                all_pids = set()
+                for entry in timeline:
+                    for block in entry.get("memory_map", []):
+                        if not block.get("free", True):
+                            all_pids.add(block["pid"])
+
+                # Color palette for processes
+                palette = [
+                    "#00ff9d", "#3b82f6", "#f59e0b", "#ef4444",
+                    "#a855f7", "#06b6d4", "#f97316", "#84cc16",
+                ]
+                pid_colors = {pid: palette[i % len(palette)] for i, pid in enumerate(sorted(all_pids))}
+
+                # Build one trace per unique PID + FREE
+                # x = snapshot index, y = block size, base = block start
+                # We need separate traces per PID for legend
+
+                # Collect data per trace
+                traces = {}  # key: pid or "FREE"
+
+                for snap_idx, entry in enumerate(timeline):
+                    memory_map = entry.get("memory_map", [])
+                    event = entry.get("event", "")
+                    label = f"{snap_idx+1}: {event}"
+
+                    for block in memory_map:
+                        pid_key = "FREE" if block.get("free", True) else block["pid"]
+                        size = block["end"] - block["start"]
+                        base = block["start"]
+
+                        if pid_key not in traces:
+                            traces[pid_key] = {
+                                "x": [],
+                                "y": [],
+                                "base": [],
+                                "text": [],
+                                "color": "#2a2d3e" if pid_key == "FREE" else pid_colors.get(pid_key, "#888"),
+                            }
+
+                        traces[pid_key]["x"].append(label)
+                        traces[pid_key]["y"].append(size)
+                        traces[pid_key]["base"].append(base)
+                        traces[pid_key]["text"].append(f"{pid_key}<br>{base}–{block['end']}")
+
+                fig = go.Figure()
+
+                # Add FREE first (renders at bottom of legend)
+                if "FREE" in traces:
+                    t = traces["FREE"]
+                    fig.add_trace(go.Bar(
+                        name="FREE",
+                        x=t["x"],
+                        y=t["y"],
+                        base=t["base"],
+                        text=t["text"],
+                        textposition="inside",
+                        marker_color=t["color"],
+                        marker_line=dict(color="#0f1117", width=1),
+                        hoverinfo="text",
+                        insidetextanchor="middle",
+                    ))
+
+                # Add process blocks
+                for pid_key, t in traces.items():
+                    if pid_key == "FREE":
+                        continue
+                    fig.add_trace(go.Bar(
+                        name=pid_key,
+                        x=t["x"],
+                        y=t["y"],
+                        base=t["base"],
+                        text=t["text"],
+                        textposition="inside",
+                        marker_color=t["color"],
+                        marker_line=dict(color="#0f1117", width=1),
+                        hoverinfo="text",
+                        insidetextanchor="middle",
+                    ))
+
+                fig.update_layout(
+                    barmode="overlay",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(
+                        title="Snapshot (Event)",
+                        gridcolor="#2a2d3e",
+                        tickangle=-30,
+                    ),
+                    yaxis=dict(
+                        title="Memory Address (K)",
+                        gridcolor="#2a2d3e",
+                        range=[0, total_mem],
+                    ),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                    margin=dict(l=40, r=20, t=20, b=80),
+                    height=500,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No memory map data available.")
 
         with tab_timeline:
             timeline = mem_result.get("timeline", [])
