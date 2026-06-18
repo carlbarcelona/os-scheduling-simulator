@@ -41,14 +41,12 @@ st.sidebar.divider()
 # -------------------------------------------------------------
 if page == "Scheduler":
 
-    # Algorithm selector
     algorithm = st.sidebar.selectbox(
         "Algorithm",
         ["FCFS", "SJF Non-Preemptive", "SJF Preemptive", "Round Robin", "Priority Non-Preemptive", "Priority Preemptive"],
         help="Select the CPU scheduling algorithm to simulate."
     )
 
-    # Quantum input (only for Round Robin)
     quantum = None
     if algorithm == "Round Robin":
         quantum = st.sidebar.number_input(
@@ -59,7 +57,6 @@ if page == "Scheduler":
 
     st.sidebar.divider()
 
-    # Add process form
     st.sidebar.subheader("Add Process")
 
     col_pid, col_at = st.sidebar.columns(2)
@@ -72,7 +69,6 @@ if page == "Scheduler":
     with col_bt:
         burst_time = st.number_input("Burst", min_value=1, step=1, key="burst_input")
 
-    # Priority input (only for Priority algorithms)
     priority = 0
     if algorithm in ["Priority Non-Preemptive", "Priority Preemptive"]:
         with col_pr:
@@ -100,7 +96,6 @@ if page == "Scheduler":
 
     st.sidebar.divider()
 
-    # Process list in sidebar
     if st.session_state.processes:
         st.sidebar.subheader(f"Process Queue — {len(st.session_state.processes)}")
         for i, p in enumerate(st.session_state.processes):
@@ -122,12 +117,10 @@ if page == "Scheduler":
             st.session_state.compare_results = None
             st.rerun()
 
-    # -- MAIN AREA
     st.title("CPU Scheduler")
     st.caption(f"Algorithm: **{algorithm}** · Processes: **{len(st.session_state.processes)}**")
     st.divider()
 
-    # Algorithm to endpoint mapping
     ALGORITHM_MAP = {
         "FCFS": FCFS_API,
         "SJF Non-Preemptive": SJF_NP_API,
@@ -148,16 +141,11 @@ if page == "Scheduler":
         response.raise_for_status()
         return response.json()
 
-    # Current process table + Run button
     col_table, col_run = st.columns([3, 1])
 
     with col_table:
         if st.session_state.processes:
-            st.dataframe(
-                st.session_state.processes,
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.dataframe(st.session_state.processes, use_container_width=True, hide_index=True)
         else:
             st.info("No processes added yet. Use the sidebar to add processes.")
 
@@ -203,7 +191,6 @@ if page == "Scheduler":
                 st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.last_response = None
 
-    # Results
     if st.session_state.last_response is not None:
         st.divider()
         result = st.session_state.last_response
@@ -301,7 +288,6 @@ elif page == "Mass Storage":
     st.caption("Module 7 — Disk head scheduling algorithms")
     st.divider()
 
-    # Sidebar inputs for Mass Storage
     st.sidebar.subheader("Disk Parameters")
 
     disk_algorithm = st.sidebar.selectbox(
@@ -338,7 +324,6 @@ elif page == "Mass Storage":
         label_visibility="collapsed"
     )
 
-    # Disk algorithm to endpoint mapping
     DISK_ALGORITHM_MAP = {
         "FCFS": DISK_FCFS_API,
         "SSTF": DISK_SSTF_API,
@@ -348,7 +333,6 @@ elif page == "Mass Storage":
         "C-LOOK": DISK_CLOOK_API,
     }
 
-    # Main area
     st.subheader(f"Algorithm: {disk_algorithm}")
 
     col_params, col_run = st.columns([3, 1])
@@ -415,7 +399,6 @@ elif page == "Mass Storage":
                 st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.disk_response = None
 
-    # Disk Results
     if st.session_state.disk_response is not None:
         st.divider()
         disk_result = st.session_state.disk_response
@@ -500,7 +483,7 @@ elif page == "Memory":
 # -------------------------------------------------------------
 elif page == "Compare":
     st.title("Compare Mode")
-    st.caption("Run all algorithms on the same process list and compare results side by side.")
+    st.caption("Run all CPU scheduling algorithms on the same process list and compare results side by side.")
     st.divider()
 
     if st.session_state.processes:
@@ -543,16 +526,68 @@ elif page == "Compare":
                 st.error("Cannot connect to the API. Is the backend running? (/schedule/analyze endpoint pending from Backend Architect)")
                 st.session_state.compare_results = None
 
+    # Compare Mode results — Plotly grouped bar chart + table + raw
     if st.session_state.compare_results is not None:
+        import plotly.graph_objects as go
+
         results = st.session_state.compare_results.get("results", {})
-        cols = st.columns(4)
-        algo_names = list(results.keys())[:4]
-        for col, name in zip(cols, algo_names):
-            with col:
-                st.markdown(f"**{name.upper()}**")
-                st.json(results[name])
+        algo_names = list(results.keys())
+
+        avg_waiting    = [results[a].get("avg_waiting_time", 0) for a in algo_names]
+        avg_turnaround = [results[a].get("avg_turnaround_time", 0) for a in algo_names]
+        cpu_util       = [results[a].get("cpu_utilization", 0) for a in algo_names]
+
+        tab_chart, tab_table, tab_raw = st.tabs(["Chart", "Table", "Raw Response"])
+
+        with tab_chart:
+            st.subheader("Algorithm Comparison")
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                name="Avg Waiting Time",
+                x=algo_names,
+                y=avg_waiting,
+                marker_color="#00ff9d",
+            ))
+            fig.add_trace(go.Bar(
+                name="Avg Turnaround Time",
+                x=algo_names,
+                y=avg_turnaround,
+                marker_color="#3b82f6",
+            ))
+            fig.add_trace(go.Bar(
+                name="CPU Utilization (%)",
+                x=algo_names,
+                y=cpu_util,
+                marker_color="#f59e0b",
+            ))
+            fig.update_layout(
+                barmode="group",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#e2e8f0"),
+                xaxis=dict(gridcolor="#2a2d3e"),
+                yaxis=dict(gridcolor="#2a2d3e", title="Value"),
+                legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                margin=dict(l=40, r=20, t=20, b=40),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab_table:
+            table_data = []
+            for a in algo_names:
+                table_data.append({
+                    "Algorithm": a.upper(),
+                    "Avg Waiting Time": round(results[a].get("avg_waiting_time", 0), 2),
+                    "Avg Turnaround Time": round(results[a].get("avg_turnaround_time", 0), 2),
+                    "CPU Utilization (%)": round(results[a].get("cpu_utilization", 0), 2),
+                })
+            st.dataframe(table_data, use_container_width=True, hide_index=True)
+
+        with tab_raw:
+            st.json(results)
+
     else:
-        st.info("Compare Mode results will display here as 4 columns once /schedule/analyze is available from Backend Architect.")
+        st.info("Compare Mode results will display here once /schedule/analyze is available from Backend Architect.")
 
 # -------------------------------------------------------------
 # PAGE: RECOMMEND
