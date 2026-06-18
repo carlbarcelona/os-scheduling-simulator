@@ -25,6 +25,9 @@ if "compare_results" not in st.session_state:
 if "disk_response" not in st.session_state:
     st.session_state.disk_response = None
 
+if "disk_compare_results" not in st.session_state:
+    st.session_state.disk_compare_results = None
+
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
@@ -483,111 +486,258 @@ elif page == "Memory":
 # -------------------------------------------------------------
 elif page == "Compare":
     st.title("Compare Mode")
-    st.caption("Run all CPU scheduling algorithms on the same process list and compare results side by side.")
+    st.caption("Compare all algorithms on the same input side by side.")
     st.divider()
 
-    if st.session_state.processes:
-        st.dataframe(st.session_state.processes, use_container_width=True, hide_index=True)
-    else:
-        st.info("No processes added yet. Go to Scheduler page to add processes.")
+    # Two sections — CPU Scheduling and Disk Scheduling
+    section = st.radio(
+        "Compare Type",
+        ["CPU Scheduling", "Disk Scheduling"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
 
     st.divider()
 
-    if st.button("▶ Run Compare Mode", type="primary", disabled=len(st.session_state.processes) == 0):
-        with st.status("Running comparison...", expanded=True) as status:
-            try:
-                st.write("Sending request to /schedule/analyze...")
-                response = requests.post(
-                    SCHEDULE_ANALYZE_API,
-                    json={"processes": st.session_state.processes},
-                    timeout=10,
-                )
-                response.raise_for_status()
-                st.session_state.compare_results = response.json()
-                status.update(label="Comparison complete!", state="complete", expanded=False)
-                st.toast("Comparison complete!", icon="✅")
+    # ----- CPU SCHEDULING COMPARE -----
+    if section == "CPU Scheduling":
+        st.subheader("CPU Scheduling — Algorithm Comparison")
+        st.caption("Runs all CPU scheduling algorithms on the same process list.")
 
-            except requests.exceptions.Timeout:
-                status.update(label="Request timed out.", state="error", expanded=False)
-                st.error("Request timed out. Is the backend running?")
-                st.session_state.compare_results = None
+        if st.session_state.processes:
+            st.dataframe(st.session_state.processes, use_container_width=True, hide_index=True)
+        else:
+            st.info("No processes added yet. Go to Scheduler page to add processes.")
 
-            except requests.exceptions.HTTPError as e:
+        st.divider()
+
+        if st.button("▶ Run CPU Compare", type="primary", disabled=len(st.session_state.processes) == 0, key="cpu_compare_btn"):
+            with st.status("Running CPU comparison...", expanded=True) as status:
                 try:
-                    detail = e.response.json().get("detail", str(e))
-                except Exception:
-                    detail = str(e)
-                status.update(label="API error.", state="error", expanded=False)
-                st.error(f"API error: {detail}")
-                st.session_state.compare_results = None
+                    st.write("Sending request to /schedule/analyze...")
+                    response = requests.post(
+                        SCHEDULE_ANALYZE_API,
+                        json={"processes": st.session_state.processes},
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    st.session_state.compare_results = response.json()
+                    status.update(label="Comparison complete!", state="complete", expanded=False)
+                    st.toast("CPU comparison complete!", icon="✅")
 
-            except requests.exceptions.ConnectionError:
-                status.update(label="Cannot connect to API.", state="error", expanded=False)
-                st.error("Cannot connect to the API. Is the backend running? (/schedule/analyze endpoint pending from Backend Architect)")
-                st.session_state.compare_results = None
+                except requests.exceptions.Timeout:
+                    status.update(label="Request timed out.", state="error", expanded=False)
+                    st.error("Request timed out. Is the backend running?")
+                    st.session_state.compare_results = None
 
-    # Compare Mode results — Plotly grouped bar chart + table + raw
-    if st.session_state.compare_results is not None:
-        import plotly.graph_objects as go
+                except requests.exceptions.HTTPError as e:
+                    try:
+                        detail = e.response.json().get("detail", str(e))
+                    except Exception:
+                        detail = str(e)
+                    status.update(label="API error.", state="error", expanded=False)
+                    st.error(f"API error: {detail}")
+                    st.session_state.compare_results = None
 
-        results = st.session_state.compare_results.get("results", {})
-        algo_names = list(results.keys())
+                except requests.exceptions.ConnectionError:
+                    status.update(label="Cannot connect to API.", state="error", expanded=False)
+                    st.error("Cannot connect to the API. Is the backend running? (/schedule/analyze endpoint pending from Backend Architect)")
+                    st.session_state.compare_results = None
 
-        avg_waiting    = [results[a].get("avg_waiting_time", 0) for a in algo_names]
-        avg_turnaround = [results[a].get("avg_turnaround_time", 0) for a in algo_names]
-        cpu_util       = [results[a].get("cpu_utilization", 0) for a in algo_names]
+        if st.session_state.compare_results is not None:
+            import plotly.graph_objects as go
 
-        tab_chart, tab_table, tab_raw = st.tabs(["Chart", "Table", "Raw Response"])
+            results = st.session_state.compare_results.get("results", {})
+            algo_names = list(results.keys())
 
-        with tab_chart:
-            st.subheader("Algorithm Comparison")
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
-                name="Avg Waiting Time",
-                x=algo_names,
-                y=avg_waiting,
-                marker_color="#00ff9d",
-            ))
-            fig.add_trace(go.Bar(
-                name="Avg Turnaround Time",
-                x=algo_names,
-                y=avg_turnaround,
-                marker_color="#3b82f6",
-            ))
-            fig.add_trace(go.Bar(
-                name="CPU Utilization (%)",
-                x=algo_names,
-                y=cpu_util,
-                marker_color="#f59e0b",
-            ))
-            fig.update_layout(
-                barmode="group",
-                plot_bgcolor="rgba(0,0,0,0)",
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#e2e8f0"),
-                xaxis=dict(gridcolor="#2a2d3e"),
-                yaxis=dict(gridcolor="#2a2d3e", title="Value"),
-                legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
-                margin=dict(l=40, r=20, t=20, b=40),
+            avg_waiting    = [results[a].get("avg_waiting_time", 0) for a in algo_names]
+            avg_turnaround = [results[a].get("avg_turnaround_time", 0) for a in algo_names]
+            cpu_util       = [results[a].get("cpu_utilization", 0) for a in algo_names]
+
+            tab_chart, tab_table, tab_raw = st.tabs(["Chart", "Table", "Raw Response"])
+
+            with tab_chart:
+                st.subheader("Algorithm Comparison")
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    name="Avg Waiting Time",
+                    x=algo_names,
+                    y=avg_waiting,
+                    marker_color="#00ff9d",
+                ))
+                fig.add_trace(go.Bar(
+                    name="Avg Turnaround Time",
+                    x=algo_names,
+                    y=avg_turnaround,
+                    marker_color="#3b82f6",
+                ))
+                fig.add_trace(go.Bar(
+                    name="CPU Utilization (%)",
+                    x=algo_names,
+                    y=cpu_util,
+                    marker_color="#f59e0b",
+                ))
+                fig.update_layout(
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e", title="Value"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab_table:
+                table_data = []
+                for a in algo_names:
+                    table_data.append({
+                        "Algorithm": a.upper(),
+                        "Avg Waiting Time": round(results[a].get("avg_waiting_time", 0), 2),
+                        "Avg Turnaround Time": round(results[a].get("avg_turnaround_time", 0), 2),
+                        "CPU Utilization (%)": round(results[a].get("cpu_utilization", 0), 2),
+                    })
+                st.dataframe(table_data, use_container_width=True, hide_index=True)
+
+            with tab_raw:
+                st.json(results)
+
+        else:
+            st.info("CPU comparison results will display here once /schedule/analyze is available from Backend Architect.")
+
+    # ----- DISK SCHEDULING COMPARE -----
+    elif section == "Disk Scheduling":
+        st.subheader("Disk Scheduling — Algorithm Comparison")
+        st.caption("Runs all disk scheduling algorithms on the same input. Key metric: total head movement.")
+
+        st.divider()
+
+        # Disk input form inline
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            cmp_head = st.number_input(
+                "Initial Head Position",
+                min_value=0, step=1, value=53,
+                key="cmp_head",
+                help="Starting position of the disk head."
             )
-            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            cmp_tracks = st.number_input(
+                "Number of Tracks",
+                min_value=1, step=1, value=200,
+                key="cmp_tracks",
+                help="Total number of cylinders on the disk."
+            )
+        with col3:
+            cmp_direction = st.selectbox(
+                "Direction",
+                ["right", "left"],
+                key="cmp_direction",
+                help="Used by SCAN, C-SCAN, LOOK, C-LOOK."
+            )
 
-        with tab_table:
-            table_data = []
-            for a in algo_names:
-                table_data.append({
-                    "Algorithm": a.upper(),
-                    "Avg Waiting Time": round(results[a].get("avg_waiting_time", 0), 2),
-                    "Avg Turnaround Time": round(results[a].get("avg_turnaround_time", 0), 2),
-                    "CPU Utilization (%)": round(results[a].get("cpu_utilization", 0), 2),
-                })
-            st.dataframe(table_data, use_container_width=True, hide_index=True)
+        cmp_requests_input = st.text_input(
+            "Cylinder Requests (comma separated)",
+            value="98, 183, 37, 122, 14, 124, 65, 67",
+            key="cmp_requests"
+        )
 
-        with tab_raw:
-            st.json(results)
+        try:
+            cmp_requests_list = [int(r.strip()) for r in cmp_requests_input.split(",") if r.strip()]
+        except ValueError:
+            st.error("Invalid input — enter comma-separated integers only.")
+            cmp_requests_list = []
 
-    else:
-        st.info("Compare Mode results will display here once /schedule/analyze is available from Backend Architect.")
+        st.divider()
+
+        if st.button("▶ Run Disk Compare", type="primary", disabled=len(cmp_requests_list) == 0, key="disk_compare_btn"):
+            disk_payload = {
+                "head": int(cmp_head),
+                "requests": cmp_requests_list,
+                "number_of_tracks": int(cmp_tracks),
+                "direction": cmp_direction,
+            }
+
+            with st.status("Running disk comparison...", expanded=True) as status:
+                try:
+                    st.write("Sending request to /disk/analyze...")
+                    response = requests.post(
+                        DISK_ANALYZE_API,
+                        json=disk_payload,
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    st.session_state.disk_compare_results = response.json()
+                    status.update(label="Disk comparison complete!", state="complete", expanded=False)
+                    st.toast("Disk comparison complete!", icon="✅")
+
+                except requests.exceptions.Timeout:
+                    status.update(label="Request timed out.", state="error", expanded=False)
+                    st.error("Request timed out. Is the backend running?")
+                    st.session_state.disk_compare_results = None
+
+                except requests.exceptions.HTTPError as e:
+                    try:
+                        detail = e.response.json().get("detail", str(e))
+                    except Exception:
+                        detail = str(e)
+                    status.update(label="API error.", state="error", expanded=False)
+                    st.error(f"API error: {detail}")
+                    st.session_state.disk_compare_results = None
+
+                except requests.exceptions.ConnectionError:
+                    status.update(label="Cannot connect to API.", state="error", expanded=False)
+                    st.error("Cannot connect to the API. Is the backend running? (/disk/analyze endpoint pending from Backend Architect)")
+                    st.session_state.disk_compare_results = None
+
+        if st.session_state.disk_compare_results is not None:
+            import plotly.graph_objects as go
+
+            disk_results = st.session_state.disk_compare_results.get("results", {})
+            disk_algo_names = list(disk_results.keys())
+            total_movements = [disk_results[a].get("total_head_movement", 0) for a in disk_algo_names]
+
+            tab_chart, tab_table, tab_raw = st.tabs(["Chart", "Table", "Raw Response"])
+
+            with tab_chart:
+                st.subheader("Total Head Movement Comparison")
+                st.caption("Lower total head movement = more efficient algorithm.")
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=disk_algo_names,
+                    y=total_movements,
+                    marker_color="#3b82f6",
+                    text=total_movements,
+                    textposition="outside",
+                ))
+                fig.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e", title="Total Head Movement"),
+                    showlegend=False,
+                    margin=dict(l=40, r=20, t=40, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab_table:
+                disk_table_data = []
+                for a in disk_algo_names:
+                    disk_table_data.append({
+                        "Algorithm": a.upper(),
+                        "Total Head Movement": disk_results[a].get("total_head_movement", 0),
+                    })
+                # Sort by total head movement ascending (lower = better)
+                disk_table_data.sort(key=lambda x: x["Total Head Movement"])
+                st.dataframe(disk_table_data, use_container_width=True, hide_index=True)
+
+            with tab_raw:
+                st.json(disk_results)
+
+        else:
+            st.info("Disk comparison results will display here once /disk/analyze is available from Backend Architect.")
 
 # -------------------------------------------------------------
 # PAGE: RECOMMEND
