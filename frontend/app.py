@@ -28,12 +28,21 @@ if "disk_response" not in st.session_state:
 if "disk_compare_results" not in st.session_state:
     st.session_state.disk_compare_results = None
 
+if "memory_response" not in st.session_state:
+    st.session_state.memory_response = None
+
+if "vm_response" not in st.session_state:
+    st.session_state.vm_response = None
+
+if "memory_processes" not in st.session_state:
+    st.session_state.memory_processes = []
+
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
 page = st.sidebar.radio(
     "Navigate",
-    ["Scheduler", "Mass Storage", "Memory", "Compare", "Recommend", "Deadlock"],
+    ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare", "Recommend", "Deadlock"],
     label_visibility="collapsed"
 )
 
@@ -474,12 +483,374 @@ elif page == "Mass Storage":
 # PAGE: MEMORY
 # -------------------------------------------------------------
 elif page == "Memory":
-    st.title("Memory Visualizer")
-    st.caption("Module 5 — Memory Management")
+    st.title("Memory Management")
+    st.caption("Module 5 — MVT (Variable Partition) memory allocation with/without compaction")
     st.divider()
-    st.info("Coming soon - waiting for Visualizer to deliver components/memory.py and Algorithm Engineer to deliver memory management algorithms (Module 5).")
-    # from components.memory import render_memory
-    # st.plotly_chart(render_memory(blocks, algorithm))
+
+    # Sidebar inputs
+    st.sidebar.subheader("Memory Parameters")
+
+    total_memory = st.sidebar.number_input(
+        "Total Memory (K)",
+        min_value=1, step=64, value=1024,
+        help="Total memory capacity in kilobytes."
+    )
+
+    fit_strategy = st.sidebar.selectbox(
+        "Fit Strategy",
+        ["first", "best", "worst", "next"],
+        help="Memory allocation strategy. First Fit, Best Fit, Worst Fit, or Next Fit."
+    )
+
+    compaction = st.sidebar.selectbox(
+        "Compaction",
+        ["With Compaction", "Without Compaction"],
+        help="Whether to compact memory when allocation fails."
+    )
+
+    st.sidebar.divider()
+    st.sidebar.subheader("Add Process")
+
+    col_mpid, col_msize = st.sidebar.columns(2)
+    with col_mpid:
+        m_pid = st.text_input("Process ID", placeholder="e.g. P1", key="m_pid_input")
+    with col_msize:
+        m_size = st.number_input("Size (K)", min_value=1, step=1, value=200, key="m_size_input")
+
+    m_burst = st.sidebar.number_input(
+        "Burst Time",
+        min_value=0.1, step=0.5, value=3.0,
+        key="m_burst_input",
+        help="Estimated execution time of the process."
+    )
+
+    if st.sidebar.button("＋ Add Process", use_container_width=True, type="primary", key="m_add_btn"):
+        if not m_pid.strip():
+            st.sidebar.error("Process ID cannot be empty.")
+        elif any(p["pid"] == m_pid.strip() for p in st.session_state.memory_processes):
+            st.sidebar.error(f"PID '{m_pid}' already exists.")
+        else:
+            st.session_state.memory_processes.append({
+                "pid": m_pid.strip(),
+                "size": int(m_size),
+                "burst_time": float(m_burst),
+            })
+            st.toast(f"Added {m_pid.strip()}", icon="✅")
+            st.rerun()
+
+    st.sidebar.divider()
+
+    if st.session_state.memory_processes:
+        st.sidebar.subheader(f"Process Queue — {len(st.session_state.memory_processes)}")
+        for i, p in enumerate(st.session_state.memory_processes):
+            col_info, col_del = st.sidebar.columns([4, 1])
+            with col_info:
+                st.caption(f"**{p['pid']}** · Size:{p['size']}K · BT:{p['burst_time']}")
+            with col_del:
+                if st.button("✕", key=f"m_del_{i}", help=f"Remove {p['pid']}"):
+                    st.session_state.memory_processes.pop(i)
+                    st.session_state.memory_response = None
+                    st.rerun()
+
+        if st.sidebar.button("🗑️ Clear All", use_container_width=True, key="m_clear_btn"):
+            st.session_state.memory_processes = []
+            st.session_state.memory_response = None
+            st.rerun()
+
+    # Main area
+    st.subheader(f"Strategy: {fit_strategy.capitalize()} Fit — {compaction}")
+
+    col_table, col_run = st.columns([3, 1])
+
+    with col_table:
+        if st.session_state.memory_processes:
+            st.dataframe(st.session_state.memory_processes, use_container_width=True, hide_index=True)
+        else:
+            st.info("No processes added yet. Use the sidebar to add processes.")
+
+    with col_run:
+        st.write("")
+        mem_run_clicked = st.button(
+            "▶ Run Simulation",
+            use_container_width=True,
+            type="primary",
+            disabled=len(st.session_state.memory_processes) == 0,
+            key="mem_run_btn"
+        )
+
+    if mem_run_clicked:
+        # NOTE: MVT endpoints not yet in config.py — pending Architect.
+        # Endpoint will be either /memory/mvt_with_compaction or /memory/mvt_without_compaction
+        mem_payload = {
+            "total_memory": int(total_memory),
+            "fit_strategy": fit_strategy,
+            "processes": st.session_state.memory_processes,
+        }
+
+        # Placeholder endpoint — update when Architect adds to config.py
+        mem_endpoint = f"{API_BASE}/memory/mvt_with_compaction" if compaction == "With Compaction" else f"{API_BASE}/memory/mvt_without_compaction"
+
+        with st.status("Running memory simulation...", expanded=True) as status:
+            try:
+                st.write("Sending request to API...")
+                response = requests.post(mem_endpoint, json=mem_payload, timeout=10)
+                response.raise_for_status()
+                st.session_state.memory_response = response.json()
+                st.write("Response received.")
+                status.update(label="Simulation complete!", state="complete", expanded=False)
+                st.toast("Simulation complete!", icon="✅")
+
+            except requests.exceptions.Timeout:
+                status.update(label="Request timed out.", state="error", expanded=False)
+                st.error("Request timed out. Is the backend running?")
+                st.session_state.memory_response = None
+
+            except requests.exceptions.HTTPError as e:
+                try:
+                    detail = e.response.json().get("detail", str(e))
+                except Exception:
+                    detail = str(e)
+                status.update(label="API error.", state="error", expanded=False)
+                st.error(f"API error: {detail}")
+                st.session_state.memory_response = None
+
+            except requests.exceptions.ConnectionError:
+                status.update(label="Cannot connect to API.", state="error", expanded=False)
+                st.error("Cannot connect to the API. Is the backend running? (Memory endpoints pending from Backend Architect)")
+                st.session_state.memory_response = None
+
+    if st.session_state.memory_response is not None:
+        st.divider()
+        mem_result = st.session_state.memory_response
+
+        tab_summary, tab_timeline, tab_raw = st.tabs(["Summary", "Timeline", "Raw Response"])
+
+        with tab_summary:
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric(
+                    "Avg Burst Time",
+                    f"{mem_result.get('avg_burst_time', 0):.2f}",
+                    help="Average execution time across all processes."
+                )
+            with c2:
+                st.metric(
+                    "CPU Utilization",
+                    f"{mem_result.get('cpu_utilization', 0):.2f}%",
+                    help="Percentage of time CPU was actively executing processes."
+                )
+            with c3:
+                st.metric(
+                    "Strategy",
+                    mem_result.get("strategy", "-").capitalize(),
+                    help="Memory fit strategy used."
+                )
+
+            st.divider()
+
+            col_alloc, col_fail = st.columns(2)
+            with col_alloc:
+                st.subheader("Allocated")
+                st.dataframe(mem_result.get("allocated", []), use_container_width=True, hide_index=True)
+            with col_fail:
+                st.subheader("Failed")
+                failed = mem_result.get("failed", [])
+                if failed:
+                    st.dataframe({"PID": failed}, use_container_width=True, hide_index=True)
+                else:
+                    st.success("All processes allocated successfully.")
+
+            if mem_result.get("compaction_performed"):
+                st.info("Compaction was performed to accommodate failed processes.")
+                retry = mem_result.get("retry_allocated", [])
+                if retry:
+                    st.subheader("Retry Allocated (after compaction)")
+                    st.dataframe({"PID": retry}, use_container_width=True, hide_index=True)
+
+        with tab_timeline:
+            timeline = mem_result.get("timeline", [])
+            if timeline:
+                st.dataframe(timeline, use_container_width=True, hide_index=True)
+            else:
+                st.info("No timeline data available.")
+
+        with tab_raw:
+            st.json(mem_result)
+
+# -------------------------------------------------------------
+# PAGE: VIRTUAL MEMORY
+# -------------------------------------------------------------
+elif page == "Virtual Memory":
+    st.title("Virtual Memory")
+    st.caption("Module 6 — Page Replacement Algorithms")
+    st.divider()
+
+    # Sidebar inputs
+    st.sidebar.subheader("Page Replacement Parameters")
+
+    vm_algorithm = st.sidebar.selectbox(
+        "Algorithm",
+        ["FIFO", "LRU", "LRU Approximation", "Optimal", "LFU", "MFU"],
+        help="Select the page replacement algorithm."
+    )
+
+    vm_frames = st.sidebar.number_input(
+        "Number of Frames",
+        min_value=1, step=1, value=3,
+        help="Number of frames available in physical memory."
+    )
+
+    st.sidebar.divider()
+    st.sidebar.caption("Enter page reference string separated by commas.")
+    vm_pages_input = st.sidebar.text_input(
+        "Page Reference String",
+        value="7, 0, 1, 2, 0, 3, 0, 4, 2, 3, 0, 3, 2",
+        placeholder="e.g. 7, 0, 1, 2, 0, 3",
+        label_visibility="collapsed"
+    )
+
+    # VM algorithm to endpoint mapping
+    # NOTE: VM endpoints not yet in config.py — pending Architect.
+    VM_ALGORITHM_MAP = {
+        "FIFO": f"{API_BASE}/vm/fifo",
+        "LRU": f"{API_BASE}/vm/lru",
+        "LRU Approximation": f"{API_BASE}/vm/lru_approx",
+        "Optimal": f"{API_BASE}/vm/optimal",
+        "LFU": f"{API_BASE}/vm/lfu",
+        "MFU": f"{API_BASE}/vm/mfu",
+    }
+
+    # Main area
+    st.subheader(f"Algorithm: {vm_algorithm}")
+
+    col_pages, col_run = st.columns([3, 1])
+
+    with col_pages:
+        try:
+            vm_pages_list = [int(p.strip()) for p in vm_pages_input.split(",") if p.strip()]
+            st.dataframe(
+                {"Page Reference String": vm_pages_list},
+                use_container_width=True,
+                hide_index=True,
+            )
+        except ValueError:
+            st.error("Invalid input — enter comma-separated integers only.")
+            vm_pages_list = []
+
+    with col_run:
+        st.write("")
+        vm_run_clicked = st.button(
+            f"▶ Run {vm_algorithm}",
+            use_container_width=True,
+            type="primary",
+            disabled=len(vm_pages_list) == 0,
+            key="vm_run_btn"
+        )
+
+    if vm_run_clicked:
+        vm_payload = {
+            "pages": vm_pages_list,
+            "frames": int(vm_frames),
+        }
+
+        with st.status(f"Running {vm_algorithm}...", expanded=True) as status:
+            try:
+                st.write("Sending request to API...")
+                response = requests.post(
+                    VM_ALGORITHM_MAP[vm_algorithm],
+                    json=vm_payload,
+                    timeout=10,
+                )
+                response.raise_for_status()
+                st.session_state.vm_response = response.json()
+                st.write("Response received.")
+                status.update(label="Simulation complete!", state="complete", expanded=False)
+                st.toast("Simulation complete!", icon="✅")
+
+            except requests.exceptions.Timeout:
+                status.update(label="Request timed out.", state="error", expanded=False)
+                st.error("Request timed out. Is the backend running?")
+                st.session_state.vm_response = None
+
+            except requests.exceptions.HTTPError as e:
+                try:
+                    detail = e.response.json().get("detail", str(e))
+                except Exception:
+                    detail = str(e)
+                status.update(label="API error.", state="error", expanded=False)
+                st.error(f"API error: {detail}")
+                st.session_state.vm_response = None
+
+            except requests.exceptions.ConnectionError:
+                status.update(label="Cannot connect to API.", state="error", expanded=False)
+                st.error("Cannot connect to the API. Is the backend running? (Virtual Memory endpoints pending from Backend Architect)")
+                st.session_state.vm_response = None
+
+    if st.session_state.vm_response is not None:
+        st.divider()
+        vm_result = st.session_state.vm_response
+
+        tab_summary, tab_timeline, tab_raw = st.tabs(["Summary", "Page Timeline", "Raw Response"])
+
+        with tab_summary:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric(
+                    "Page Fault Count",
+                    f"{vm_result.get('page_fault_count', 0)}",
+                    help="Total number of page faults that occurred."
+                )
+            with c2:
+                st.metric(
+                    "Page Fault Rate",
+                    f"{vm_result.get('page_fault_rate', 0):.2f}",
+                    help="Ratio of page faults to total page references."
+                )
+
+            st.divider()
+
+            # Page fault visualization — Plotly bar chart
+            st.subheader("Page Fault Timeline")
+            timeline = vm_result.get("timeline", [])
+            if timeline:
+                import plotly.graph_objects as go
+                pages_seq = [str(t["page"]) for t in timeline]
+                faults = [1 if t["fault"] else 0 for t in timeline]
+                colors = ["#ef4444" if f else "#00ff9d" for f in faults]
+
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=list(range(len(pages_seq))),
+                    y=[1] * len(pages_seq),
+                    marker_color=colors,
+                    text=pages_seq,
+                    textposition="inside",
+                    hovertext=[f"Page {p}: {'FAULT' if f else 'HIT'}" for p, f in zip(pages_seq, faults)],
+                    hoverinfo="text",
+                ))
+                fig.update_layout(
+                    xaxis_title="Reference",
+                    yaxis=dict(visible=False),
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    showlegend=False,
+                    margin=dict(l=20, r=20, t=20, b=40),
+                    height=120,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("🔴 Red = Page Fault  |  🟢 Green = Page Hit")
+
+        with tab_timeline:
+            timeline = vm_result.get("timeline", [])
+            if timeline:
+                st.dataframe(timeline, use_container_width=True, hide_index=True)
+            else:
+                st.info("No timeline data available.")
+
+        with tab_raw:
+            st.json(vm_result)
 
 # -------------------------------------------------------------
 # PAGE: COMPARE
@@ -489,7 +860,6 @@ elif page == "Compare":
     st.caption("Compare all algorithms on the same input side by side.")
     st.divider()
 
-    # Two sections — CPU Scheduling and Disk Scheduling
     section = st.radio(
         "Compare Type",
         ["CPU Scheduling", "Disk Scheduling"],
@@ -499,7 +869,6 @@ elif page == "Compare":
 
     st.divider()
 
-    # ----- CPU SCHEDULING COMPARE -----
     if section == "CPU Scheduling":
         st.subheader("CPU Scheduling — Algorithm Comparison")
         st.caption("Runs all CPU scheduling algorithms on the same process list.")
@@ -559,24 +928,9 @@ elif page == "Compare":
             with tab_chart:
                 st.subheader("Algorithm Comparison")
                 fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    name="Avg Waiting Time",
-                    x=algo_names,
-                    y=avg_waiting,
-                    marker_color="#00ff9d",
-                ))
-                fig.add_trace(go.Bar(
-                    name="Avg Turnaround Time",
-                    x=algo_names,
-                    y=avg_turnaround,
-                    marker_color="#3b82f6",
-                ))
-                fig.add_trace(go.Bar(
-                    name="CPU Utilization (%)",
-                    x=algo_names,
-                    y=cpu_util,
-                    marker_color="#f59e0b",
-                ))
+                fig.add_trace(go.Bar(name="Avg Waiting Time", x=algo_names, y=avg_waiting, marker_color="#00ff9d"))
+                fig.add_trace(go.Bar(name="Avg Turnaround Time", x=algo_names, y=avg_turnaround, marker_color="#3b82f6"))
+                fig.add_trace(go.Bar(name="CPU Utilization (%)", x=algo_names, y=cpu_util, marker_color="#f59e0b"))
                 fig.update_layout(
                     barmode="group",
                     plot_bgcolor="rgba(0,0,0,0)",
@@ -606,36 +960,19 @@ elif page == "Compare":
         else:
             st.info("CPU comparison results will display here once /schedule/analyze is available from Backend Architect.")
 
-    # ----- DISK SCHEDULING COMPARE -----
     elif section == "Disk Scheduling":
         st.subheader("Disk Scheduling — Algorithm Comparison")
         st.caption("Runs all disk scheduling algorithms on the same input. Key metric: total head movement.")
 
         st.divider()
 
-        # Disk input form inline
         col1, col2, col3 = st.columns(3)
         with col1:
-            cmp_head = st.number_input(
-                "Initial Head Position",
-                min_value=0, step=1, value=53,
-                key="cmp_head",
-                help="Starting position of the disk head."
-            )
+            cmp_head = st.number_input("Initial Head Position", min_value=0, step=1, value=53, key="cmp_head")
         with col2:
-            cmp_tracks = st.number_input(
-                "Number of Tracks",
-                min_value=1, step=1, value=200,
-                key="cmp_tracks",
-                help="Total number of cylinders on the disk."
-            )
+            cmp_tracks = st.number_input("Number of Tracks", min_value=1, step=1, value=200, key="cmp_tracks")
         with col3:
-            cmp_direction = st.selectbox(
-                "Direction",
-                ["right", "left"],
-                key="cmp_direction",
-                help="Used by SCAN, C-SCAN, LOOK, C-LOOK."
-            )
+            cmp_direction = st.selectbox("Direction", ["right", "left"], key="cmp_direction")
 
         cmp_requests_input = st.text_input(
             "Cylinder Requests (comma separated)",
@@ -662,11 +999,7 @@ elif page == "Compare":
             with st.status("Running disk comparison...", expanded=True) as status:
                 try:
                     st.write("Sending request to /disk/analyze...")
-                    response = requests.post(
-                        DISK_ANALYZE_API,
-                        json=disk_payload,
-                        timeout=10,
-                    )
+                    response = requests.post(DISK_ANALYZE_API, json=disk_payload, timeout=10)
                     response.raise_for_status()
                     st.session_state.disk_compare_results = response.json()
                     status.update(label="Disk comparison complete!", state="complete", expanded=False)
@@ -729,7 +1062,6 @@ elif page == "Compare":
                         "Algorithm": a.upper(),
                         "Total Head Movement": disk_results[a].get("total_head_movement", 0),
                     })
-                # Sort by total head movement ascending (lower = better)
                 disk_table_data.sort(key=lambda x: x["Total Head Movement"])
                 st.dataframe(disk_table_data, use_container_width=True, hide_index=True)
 
