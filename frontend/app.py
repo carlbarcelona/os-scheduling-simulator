@@ -440,28 +440,73 @@ elif page == "Mass Storage":
             # Seek pattern visualization — Plotly line chart
             # Matches OS textbook standard: cylinder position on X-axis,
             # time/step on Y-axis going downward (top = step 0, bottom = last step)
+            # The backend marks the C-SCAN / C-LOOK boundary jump explicitly as "?"
+            # inside the sequence array — we detect that literal marker (not inferred
+            # from distance) and render the jump segment as dashed, matching the
+            # textbook diagram convention. Numeric segments stay solid.
             st.subheader("Seek Pattern")
             sequence = disk_result.get("sequence", [])
             if sequence:
                 import plotly.graph_objects as go
 
-                # Separate numeric points from "?" boundary markers (SCAN/C-SCAN jump segments)
-                x_vals = []
-                y_vals = []
-                for step, val in enumerate(sequence):
-                    if val != "?":
-                        x_vals.append(val)
-                        y_vals.append(step)
+                # Find index of the literal "?" marker, if present
+                marker_idx = None
+                for i, val in enumerate(sequence):
+                    if val == "?":
+                        marker_idx = i
+                        break
 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=x_vals,
-                    y=y_vals,
-                    mode="lines+markers",
-                    name="Head Position",
-                    line=dict(color="#00ff9d", width=2),
-                    marker=dict(size=8, color="#00ff9d", symbol="circle"),
-                ))
+                if marker_idx is not None:
+                    # Points before the marker, and points after — "?" itself is not plotted
+                    before = [(v, s) for s, v in enumerate(sequence) if s < marker_idx]
+                    after = [(v, s) for s, v in enumerate(sequence) if s > marker_idx]
+
+                    fig = go.Figure()
+
+                    # Solid segment before the boundary jump
+                    if before:
+                        fig.add_trace(go.Scatter(
+                            x=[p[0] for p in before],
+                            y=[p[1] for p in before],
+                            mode="lines+markers",
+                            line=dict(color="#00ff9d", width=2),
+                            marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                            showlegend=False,
+                        ))
+
+                    # Dashed connector spanning the "?" boundary touch —
+                    # connects last point before the marker to first point after it
+                    if before and after:
+                        fig.add_trace(go.Scatter(
+                            x=[before[-1][0], after[0][0]],
+                            y=[before[-1][1], after[0][1]],
+                            mode="lines",
+                            line=dict(color="#00ff9d", width=2, dash="dash"),
+                            showlegend=False,
+                        ))
+
+                    # Solid segment after the boundary jump
+                    if after:
+                        fig.add_trace(go.Scatter(
+                            x=[p[0] for p in after],
+                            y=[p[1] for p in after],
+                            mode="lines+markers",
+                            line=dict(color="#00ff9d", width=2),
+                            marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                            showlegend=False,
+                        ))
+                else:
+                    # FCFS, SSTF, SCAN, LOOK — no "?" marker, single continuous solid path
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=list(sequence),
+                        y=list(range(len(sequence))),
+                        mode="lines+markers",
+                        line=dict(color="#00ff9d", width=2),
+                        marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                        showlegend=False,
+                    ))
+
                 fig.update_layout(
                     xaxis_title="Cylinder Position",
                     yaxis_title="Step",
@@ -474,6 +519,8 @@ elif page == "Mass Storage":
                     margin=dict(l=40, r=20, t=20, b=40),
                 )
                 st.plotly_chart(fig, use_container_width=True)
+                if marker_idx is not None:
+                    st.caption("Dashed segment = head jump-back at boundary (no service), solid = servicing requests.")
 
             st.divider()
             st.subheader("Service Sequence")
