@@ -320,11 +320,14 @@ elif page == "Mass Storage":
         help="Total number of cylinders on the disk."
     )
 
-    direction = st.sidebar.selectbox(
-        "Direction",
-        ["right", "left"],
-        help="Initial direction of head movement. Used by SCAN, C-SCAN, LOOK, C-LOOK."
-    )
+    # Direction only matters for SCAN, C-SCAN, LOOK, C-LOOK — FCFS and SSTF have no directional sweep
+    direction = "right"
+    if disk_algorithm in ["SCAN", "C-SCAN", "LOOK", "C-LOOK"]:
+        direction = st.sidebar.selectbox(
+            "Direction",
+            ["right", "left"],
+            help="Initial direction of head movement."
+        )
 
     st.sidebar.divider()
     st.sidebar.subheader("Disk Requests")
@@ -435,27 +438,38 @@ elif page == "Mass Storage":
             st.divider()
 
             # Seek pattern visualization — Plotly line chart
+            # Matches OS textbook standard: cylinder position on X-axis,
+            # time/step on Y-axis going downward (top = step 0, bottom = last step)
             st.subheader("Seek Pattern")
             sequence = disk_result.get("sequence", [])
             if sequence:
                 import plotly.graph_objects as go
+
+                # Separate numeric points from "?" boundary markers (SCAN/C-SCAN jump segments)
+                x_vals = []
+                y_vals = []
+                for step, val in enumerate(sequence):
+                    if val != "?":
+                        x_vals.append(val)
+                        y_vals.append(step)
+
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(
-                    x=list(range(len(sequence))),
-                    y=sequence,
+                    x=x_vals,
+                    y=y_vals,
                     mode="lines+markers",
                     name="Head Position",
                     line=dict(color="#00ff9d", width=2),
                     marker=dict(size=8, color="#00ff9d", symbol="circle"),
                 ))
                 fig.update_layout(
-                    xaxis_title="Step",
-                    yaxis_title="Cylinder Position",
+                    xaxis_title="Cylinder Position",
+                    yaxis_title="Step",
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#e2e8f0"),
-                    xaxis=dict(gridcolor="#2a2d3e"),
-                    yaxis=dict(gridcolor="#2a2d3e"),
+                    xaxis=dict(gridcolor="#2a2d3e", range=[0, number_of_tracks]),
+                    yaxis=dict(gridcolor="#2a2d3e", autorange="reversed"),
                     showlegend=False,
                     margin=dict(l=40, r=20, t=20, b=40),
                 )
