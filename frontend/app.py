@@ -37,6 +37,17 @@ if "vm_response" not in st.session_state:
 if "memory_processes" not in st.session_state:
     st.session_state.memory_processes = []
 
+if "disk_params" not in st.session_state:
+    st.session_state.disk_params = {
+        "head": 0,
+        "number_of_tracks": 1,
+        "direction": "right",
+        "requests_input": "",
+    }
+
+if "disk_params_set" not in st.session_state:
+    st.session_state.disk_params_set = False
+
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
@@ -153,22 +164,12 @@ if page == "Scheduler":
         response.raise_for_status()
         return response.json()
 
-    col_table, col_run = st.columns([3, 1])
-
-    with col_table:
-        if st.session_state.processes:
-            st.dataframe(st.session_state.processes, use_container_width=True, hide_index=True)
-        else:
-            st.info("No processes added yet. Use the sidebar to add processes.")
-
-    with col_run:
-        st.write("")
-        run_clicked = st.button(
-            f"▶ Run {algorithm}",
-            use_container_width=True,
-            type="primary",
-            disabled=len(st.session_state.processes) == 0,
-        )
+    run_clicked = st.sidebar.button(
+        f"▶ Run {algorithm}",
+        type="primary",
+        use_container_width=True,
+        disabled=len(st.session_state.processes) == 0,
+    )
 
     if run_clicked:
         processes_json = json.dumps(st.session_state.processes)
@@ -296,6 +297,7 @@ if page == "Scheduler":
 # PAGE: MASS STORAGE
 # -------------------------------------------------------------
 elif page == "Mass Storage":
+    st.session_state.disk_params_set = True
     st.title("Mass Storage — Disk Scheduling")
     st.caption("Module 7 — Disk head scheduling algorithms")
     st.divider()
@@ -310,15 +312,17 @@ elif page == "Mass Storage":
 
     head = st.sidebar.number_input(
         "Initial Head Position",
-        min_value=0, step=1, value=53,
+        min_value=0, step=1, value=st.session_state.disk_params["head"],
         help="Starting position of the disk head."
     )
+    st.session_state.disk_params["head"] = head
 
     number_of_tracks = st.sidebar.number_input(
         "Number of Tracks",
-        min_value=1, step=1, value=200,
+        min_value=1, step=1, value=st.session_state.disk_params["number_of_tracks"],
         help="Total number of cylinders on the disk."
     )
+    st.session_state.disk_params["number_of_tracks"] = number_of_tracks
 
     # Direction only matters for SCAN, C-SCAN, LOOK, C-LOOK — FCFS and SSTF have no directional sweep
     direction = "right"
@@ -326,17 +330,34 @@ elif page == "Mass Storage":
         direction = st.sidebar.selectbox(
             "Direction",
             ["right", "left"],
+            index=["right", "left"].index(st.session_state.disk_params["direction"]),
             help="Initial direction of head movement."
         )
+        st.session_state.disk_params["direction"] = direction
 
     st.sidebar.divider()
     st.sidebar.subheader("Disk Requests")
     st.sidebar.caption("Enter cylinder numbers separated by commas.")
     requests_input = st.sidebar.text_input(
         "Requests",
-        value="98, 183, 37, 122, 14, 124, 65, 67",
+        value=st.session_state.disk_params["requests_input"],
         placeholder="e.g. 98, 183, 37, 122",
         label_visibility="collapsed"
+    )
+    st.session_state.disk_params["requests_input"] = requests_input
+
+    try:
+        requests_list = [int(r.strip()) for r in requests_input.split(",") if r.strip()]
+    except ValueError:
+        st.sidebar.error("Invalid input — enter comma-separated integers only.")
+        requests_list = []
+
+    st.sidebar.divider()
+    disk_run_clicked = st.sidebar.button(
+        f"▶ Run {disk_algorithm}",
+        use_container_width=True,
+        type="primary",
+        disabled=len(requests_list) == 0,
     )
 
     DISK_ALGORITHM_MAP = {
@@ -349,29 +370,6 @@ elif page == "Mass Storage":
     }
 
     st.subheader(f"Algorithm: {disk_algorithm}")
-
-    col_params, col_run = st.columns([3, 1])
-
-    with col_params:
-        try:
-            requests_list = [int(r.strip()) for r in requests_input.split(",") if r.strip()]
-            st.dataframe(
-                {"Cylinder Requests": requests_list},
-                use_container_width=True,
-                hide_index=True,
-            )
-        except ValueError:
-            st.error("Invalid input — enter comma-separated integers only.")
-            requests_list = []
-
-    with col_run:
-        st.write("")
-        disk_run_clicked = st.button(
-            f"▶ Run {disk_algorithm}",
-            use_container_width=True,
-            type="primary",
-            disabled=len(requests_list) == 0,
-        )
 
     if disk_run_clicked:
         payload = {
@@ -522,14 +520,6 @@ elif page == "Mass Storage":
                 if marker_idx is not None:
                     st.caption("Dashed segment = head jump-back at boundary (no service), solid = servicing requests.")
 
-            st.divider()
-            st.subheader("Service Sequence")
-            st.dataframe(
-                {"Sequence": disk_result.get("sequence", [])},
-                use_container_width=True,
-                hide_index=True,
-            )
-
         with tab_movements:
             movements = disk_result.get("movements", [])
             if movements:
@@ -553,7 +543,7 @@ elif page == "Memory":
 
     total_memory = st.sidebar.number_input(
         "Total Memory (K)",
-        min_value=1, step=64, value=1024,
+        min_value=1, step=64, value=1,
         help="Total memory capacity in kilobytes."
     )
 
@@ -576,11 +566,11 @@ elif page == "Memory":
     with col_mpid:
         m_pid = st.text_input("Process ID", placeholder="e.g. P1", key="m_pid_input")
     with col_msize:
-        m_size = st.number_input("Size (K)", min_value=1, step=1, value=200, key="m_size_input")
+        m_size = st.number_input("Size (K)", min_value=1, step=1, value=1, key="m_size_input")
 
     m_burst = st.sidebar.number_input(
         "Burst Time",
-        min_value=0.1, step=0.5, value=3.0,
+        min_value=0.1, step=0.5, value=0.1,
         key="m_burst_input",
         help="Estimated execution time of the process."
     )
@@ -618,26 +608,17 @@ elif page == "Memory":
             st.session_state.memory_response = None
             st.rerun()
 
+    st.sidebar.divider()
+    mem_run_clicked = st.sidebar.button(
+        "▶ Run Simulation",
+        use_container_width=True,
+        type="primary",
+        disabled=len(st.session_state.memory_processes) == 0,
+        key="mem_run_btn"
+    )
+
     # Main area
     st.subheader(f"Strategy: {fit_strategy.capitalize()} Fit — {compaction}")
-
-    col_table, col_run = st.columns([3, 1])
-
-    with col_table:
-        if st.session_state.memory_processes:
-            st.dataframe(st.session_state.memory_processes, use_container_width=True, hide_index=True)
-        else:
-            st.info("No processes added yet. Use the sidebar to add processes.")
-
-    with col_run:
-        st.write("")
-        mem_run_clicked = st.button(
-            "▶ Run Simulation",
-            use_container_width=True,
-            type="primary",
-            disabled=len(st.session_state.memory_processes) == 0,
-            key="mem_run_btn"
-        )
 
     if mem_run_clicked:
         # NOTE: MVT endpoints not yet in config.py — pending Architect.
@@ -873,7 +854,7 @@ elif page == "Virtual Memory":
 
     vm_frames = st.sidebar.number_input(
         "Number of Frames",
-        min_value=1, step=1, value=3,
+        min_value=1, step=1, value=1,
         help="Number of frames available in physical memory."
     )
 
@@ -881,9 +862,24 @@ elif page == "Virtual Memory":
     st.sidebar.caption("Enter page reference string separated by commas.")
     vm_pages_input = st.sidebar.text_input(
         "Page Reference String",
-        value="7, 0, 1, 2, 0, 3, 0, 4, 2, 3, 0, 3, 2",
+        value="",
         placeholder="e.g. 7, 0, 1, 2, 0, 3",
         label_visibility="collapsed"
+    )
+
+    try:
+        vm_pages_list = [int(p.strip()) for p in vm_pages_input.split(",") if p.strip()]
+    except ValueError:
+        st.sidebar.error("Invalid input — enter comma-separated integers only.")
+        vm_pages_list = []
+
+    st.sidebar.divider()
+    vm_run_clicked = st.sidebar.button(
+        f"▶ Run {vm_algorithm}",
+        use_container_width=True,
+        type="primary",
+        disabled=len(vm_pages_list) == 0,
+        key="vm_run_btn"
     )
 
     # VM algorithm to endpoint mapping
@@ -899,30 +895,6 @@ elif page == "Virtual Memory":
 
     # Main area
     st.subheader(f"Algorithm: {vm_algorithm}")
-
-    col_pages, col_run = st.columns([3, 1])
-
-    with col_pages:
-        try:
-            vm_pages_list = [int(p.strip()) for p in vm_pages_input.split(",") if p.strip()]
-            st.dataframe(
-                {"Page Reference String": vm_pages_list},
-                use_container_width=True,
-                hide_index=True,
-            )
-        except ValueError:
-            st.error("Invalid input — enter comma-separated integers only.")
-            vm_pages_list = []
-
-    with col_run:
-        st.write("")
-        vm_run_clicked = st.button(
-            f"▶ Run {vm_algorithm}",
-            use_container_width=True,
-            type="primary",
-            disabled=len(vm_pages_list) == 0,
-            key="vm_run_btn"
-        )
 
     if vm_run_clicked:
         vm_payload = {
@@ -1048,12 +1020,17 @@ elif page == "Compare":
 
     if section == "CPU Scheduling":
         st.subheader("CPU Scheduling — Algorithm Comparison")
-        st.caption("Runs all CPU scheduling algorithms on the same process list.")
+        st.caption("Runs all CPU scheduling algorithms on the same process list. Priority and Quantum values, if present, are ignored by algorithms that don't use them.")
 
         if st.session_state.processes:
-            st.dataframe(st.session_state.processes, use_container_width=True, hide_index=True)
+            st.markdown(f"**Processes from Scheduler page:** {len(st.session_state.processes)}")
+            for p in st.session_state.processes:
+                if "priority" in p:
+                    st.text(f"{p['pid']}  |  Arrival: {p['arrival_time']}  |  Burst: {p['burst_time']}  |  Priority: {p['priority']}")
+                else:
+                    st.text(f"{p['pid']}  |  Arrival: {p['arrival_time']}  |  Burst: {p['burst_time']}")
         else:
-            st.info("No processes added yet. Go to Scheduler page to add processes.")
+            st.info("No processes added yet. Go to the Scheduler page to add processes first.")
 
         st.divider()
 
@@ -1143,34 +1120,31 @@ elif page == "Compare":
 
         st.divider()
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            cmp_head = st.number_input("Initial Head Position", min_value=0, step=1, value=53, key="cmp_head")
-        with col2:
-            cmp_tracks = st.number_input("Number of Tracks", min_value=1, step=1, value=200, key="cmp_tracks")
-        with col3:
-            cmp_direction = st.selectbox("Direction", ["right", "left"], key="cmp_direction")
+        if st.session_state.disk_params_set:
+            params = st.session_state.disk_params
+            st.markdown("**Parameters from Mass Storage page:**")
+            st.text(f"Initial Head Position: {params['head']}")
+            st.text(f"Number of Tracks: {params['number_of_tracks']}")
+            st.text(f"Direction: {params['direction']}")
+            st.text(f"Cylinder Requests: {params['requests_input']}")
 
-        cmp_requests_input = st.text_input(
-            "Cylinder Requests (comma separated)",
-            value="98, 183, 37, 122, 14, 124, 65, 67",
-            key="cmp_requests"
-        )
-
-        try:
-            cmp_requests_list = [int(r.strip()) for r in cmp_requests_input.split(",") if r.strip()]
-        except ValueError:
-            st.error("Invalid input — enter comma-separated integers only.")
+            try:
+                cmp_requests_list = [int(r.strip()) for r in params["requests_input"].split(",") if r.strip()]
+            except ValueError:
+                st.error("Invalid request data from Mass Storage page.")
+                cmp_requests_list = []
+        else:
+            st.info("No parameters set yet. Go to the Mass Storage page first to set head position, tracks, direction, and requests.")
             cmp_requests_list = []
 
         st.divider()
 
         if st.button("▶ Run Disk Compare", type="primary", disabled=len(cmp_requests_list) == 0, key="disk_compare_btn"):
             disk_payload = {
-                "head": int(cmp_head),
+                "head": int(st.session_state.disk_params["head"]),
                 "requests": cmp_requests_list,
-                "number_of_tracks": int(cmp_tracks),
-                "direction": cmp_direction,
+                "number_of_tracks": int(st.session_state.disk_params["number_of_tracks"]),
+                "direction": st.session_state.disk_params["direction"],
             }
 
             with st.status("Running disk comparison...", expanded=True) as status:
