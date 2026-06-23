@@ -16,8 +16,32 @@ st.set_page_config(
 if "processes" not in st.session_state:
     st.session_state.processes = []
 
+# Pending input resets — must run BEFORE the widgets that own these keys are
+# instantiated. Streamlit forbids setting st.session_state[key] after a widget
+# with that key has already rendered in the current run, so the previous
+# approach (clearing keys right before st.rerun(), at the bottom of the script)
+# failed: the widgets had already been created earlier in that same run, and
+# the rerun re-executes the whole script — the clear was always "too late" by
+# definition. Instead, queue the reset and apply it here, at the top, before
+# anything else touches these keys.
+if st.session_state.get("_reset_scheduler_inputs"):
+    st.session_state.pid_input = ""
+    st.session_state.arrival_input = 0
+    st.session_state.burst_input = 1
+    st.session_state.priority_input = 0
+    st.session_state._reset_scheduler_inputs = False
+
+if st.session_state.get("_reset_memory_inputs"):
+    st.session_state.m_pid_input = ""
+    st.session_state.m_size_input = 1
+    st.session_state.m_burst_input = 1
+    st.session_state._reset_memory_inputs = False
+
 if "last_response" not in st.session_state:
     st.session_state.last_response = None
+
+if "last_algorithm" not in st.session_state:
+    st.session_state.last_algorithm = None
 
 if "compare_results" not in st.session_state:
     st.session_state.compare_results = None
@@ -48,12 +72,38 @@ if "disk_params" not in st.session_state:
 if "disk_params_set" not in st.session_state:
     st.session_state.disk_params_set = False
 
+if "last_disk_algorithm" not in st.session_state:
+    st.session_state.last_disk_algorithm = None
+
+# -- "Sticky" selections that must survive page navigation --
+# Streamlit deletes a widget's key from session_state on any run where that
+# widget isn't rendered (e.g. the user is on a different page), then recreates
+# it fresh — with its default value — the next time it IS rendered. A plain
+# key= is therefore not enough for state that should outlive a trip to another
+# page. The fix is to mirror each such value into its own always-alive
+# session_state entry, then pass that as the widget's `index`/initial value
+# every time the widget is (re)created, and update the mirror right after.
+if "sticky_cpu_algorithm" not in st.session_state:
+    st.session_state.sticky_cpu_algorithm = "FCFS"
+
+if "sticky_disk_algorithm" not in st.session_state:
+    st.session_state.sticky_disk_algorithm = "FCFS"
+
+if "sticky_fit_strategy" not in st.session_state:
+    st.session_state.sticky_fit_strategy = "first"
+
+if "sticky_compaction" not in st.session_state:
+    st.session_state.sticky_compaction = "With Compaction"
+
+if "sticky_vm_algorithm" not in st.session_state:
+    st.session_state.sticky_vm_algorithm = "FIFO"
+
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
 page = st.sidebar.radio(
     "Navigate",
-    ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare", "Recommend", "Deadlock"],
+    ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare", "Recommend"],
     label_visibility="collapsed"
 )
 
@@ -64,17 +114,38 @@ st.sidebar.divider()
 # -------------------------------------------------------------
 if page == "Scheduler":
 
+    CPU_ALGORITHMS = ["FCFS", "SJF Non-Preemptive", "SJF Preemptive", "Round Robin", "Priority Non-Preemptive", "Priority Preemptive"]
     algorithm = st.sidebar.selectbox(
         "Algorithm",
-        ["FCFS", "SJF Non-Preemptive", "SJF Preemptive", "Round Robin", "Priority Non-Preemptive", "Priority Preemptive"],
+        CPU_ALGORITHMS,
+        index=CPU_ALGORITHMS.index(st.session_state.sticky_cpu_algorithm),
+        key="cpu_algorithm_select",
         help="Select the CPU scheduling algorithm to simulate."
     )
+
+    # Per-algorithm process queue: switching algorithms resets the process list,
+    # since different algorithms expect differently-shaped process data (e.g.
+    # Priority needs a priority field, others don't) and old results no longer
+    # correspond to the newly selected algorithm.
+    if algorithm != st.session_state.sticky_cpu_algorithm:
+        st.session_state.processes = []
+        st.session_state.last_response = None
+        st.session_state.compare_results = None
+
+    st.session_state.sticky_cpu_algorithm = algorithm
+
+    # Keep last_algorithm in sync with the CURRENT selection, not just the last
+    # successful run — this is what lets the Compare page reflect "right now"
+    # on the Scheduler page (e.g. switching to Round Robin immediately unlocks
+    # CPU Compare's full comparison, even before clicking Run).
+    st.session_state.last_algorithm = algorithm
 
     quantum = None
     if algorithm == "Round Robin":
         quantum = st.sidebar.number_input(
             "Quantum",
             min_value=1, step=1, value=2,
+            key="quantum_input",
             help="Time slice allocated to each process in Round Robin."
         )
 
@@ -115,6 +186,9 @@ if page == "Scheduler":
                 process["priority"] = int(priority)
             st.session_state.processes.append(process)
             st.toast(f"Added {pid.strip()}", icon="✅")
+            # Queue the input reset — applied at the top of the script on the
+            # next run, before these widgets are instantiated (see top of file).
+            st.session_state._reset_scheduler_inputs = True
             st.rerun()
 
     st.sidebar.divider()
@@ -181,6 +255,7 @@ if page == "Scheduler":
                 st.session_state.last_response = run_simulation(
                     ALGORITHM_MAP[algorithm], processes_json, q
                 )
+                st.session_state.last_algorithm = algorithm
                 st.write("Response received.")
                 status.update(label="Simulation complete!", state="complete", expanded=False)
                 st.toast("Simulation complete!", icon="✅")
@@ -304,11 +379,22 @@ elif page == "Mass Storage":
 
     st.sidebar.subheader("Disk Parameters")
 
+    DISK_ALGORITHMS = ["FCFS", "SSTF", "SCAN", "C-SCAN", "LOOK", "C-LOOK"]
     disk_algorithm = st.sidebar.selectbox(
         "Algorithm",
-        ["FCFS", "SSTF", "SCAN", "C-SCAN", "LOOK", "C-LOOK"],
+        DISK_ALGORITHMS,
+        index=DISK_ALGORITHMS.index(st.session_state.sticky_disk_algorithm),
+        key="disk_algorithm_select",
         help="Select the disk scheduling algorithm."
     )
+
+    # Stale results from a different algorithm shouldn't linger on screen once
+    # the selection changes — the displayed result should always match what's
+    # currently selected.
+    if disk_algorithm != st.session_state.sticky_disk_algorithm:
+        st.session_state.disk_response = None
+
+    st.session_state.sticky_disk_algorithm = disk_algorithm
 
     head = st.sidebar.number_input(
         "Initial Head Position",
@@ -331,6 +417,7 @@ elif page == "Mass Storage":
             "Direction",
             ["right", "left"],
             index=["right", "left"].index(st.session_state.disk_params["direction"]),
+            key="disk_direction_select",
             help="Initial direction of head movement."
         )
         st.session_state.disk_params["direction"] = direction
@@ -389,6 +476,7 @@ elif page == "Mass Storage":
                 )
                 response.raise_for_status()
                 st.session_state.disk_response = response.json()
+                st.session_state.last_disk_algorithm = disk_algorithm
                 st.write("Response received.")
                 status.update(label="Simulation complete!", state="complete", expanded=False)
                 st.toast("Simulation complete!", icon="✅")
@@ -544,20 +632,37 @@ elif page == "Memory":
     total_memory = st.sidebar.number_input(
         "Total Memory (K)",
         min_value=1, step=64, value=1,
+        key="total_memory_input",
         help="Total memory capacity in kilobytes."
     )
 
+    FIT_STRATEGIES = ["first", "best", "worst", "next"]
     fit_strategy = st.sidebar.selectbox(
         "Fit Strategy",
-        ["first", "best", "worst", "next"],
+        FIT_STRATEGIES,
+        index=FIT_STRATEGIES.index(st.session_state.sticky_fit_strategy),
+        key="fit_strategy_select",
         help="Memory allocation strategy. First Fit, Best Fit, Worst Fit, or Next Fit."
     )
 
+    # Per-algorithm process queue: switching fit strategy resets the process
+    # list, same as the Scheduler page — old results no longer correspond to
+    # the newly selected strategy.
+    if fit_strategy != st.session_state.sticky_fit_strategy:
+        st.session_state.memory_processes = []
+        st.session_state.memory_response = None
+
+    st.session_state.sticky_fit_strategy = fit_strategy
+
+    COMPACTION_OPTIONS = ["With Compaction", "Without Compaction"]
     compaction = st.sidebar.selectbox(
         "Compaction",
-        ["With Compaction", "Without Compaction"],
+        COMPACTION_OPTIONS,
+        index=COMPACTION_OPTIONS.index(st.session_state.sticky_compaction),
+        key="compaction_select",
         help="Whether to compact memory when allocation fails."
     )
+    st.session_state.sticky_compaction = compaction
 
     st.sidebar.divider()
     st.sidebar.subheader("Add Process")
@@ -570,7 +675,7 @@ elif page == "Memory":
 
     m_burst = st.sidebar.number_input(
         "Burst Time",
-        min_value=0.1, step=0.5, value=0.1,
+        min_value=1, step=1, value=1,
         key="m_burst_input",
         help="Estimated execution time of the process."
     )
@@ -587,6 +692,7 @@ elif page == "Memory":
                 "burst_time": float(m_burst),
             })
             st.toast(f"Added {m_pid.strip()}", icon="✅")
+            st.session_state._reset_memory_inputs = True
             st.rerun()
 
     st.sidebar.divider()
@@ -846,15 +952,24 @@ elif page == "Virtual Memory":
     # Sidebar inputs
     st.sidebar.subheader("Page Replacement Parameters")
 
+    VM_ALGORITHMS = ["FIFO", "LRU", "LRU Approximation", "Optimal", "LFU", "MFU"]
     vm_algorithm = st.sidebar.selectbox(
         "Algorithm",
-        ["FIFO", "LRU", "LRU Approximation", "Optimal", "LFU", "MFU"],
+        VM_ALGORITHMS,
+        index=VM_ALGORITHMS.index(st.session_state.sticky_vm_algorithm),
+        key="vm_algorithm_select",
         help="Select the page replacement algorithm."
     )
+
+    if vm_algorithm != st.session_state.sticky_vm_algorithm:
+        st.session_state.vm_response = None
+
+    st.session_state.sticky_vm_algorithm = vm_algorithm
 
     vm_frames = st.sidebar.number_input(
         "Number of Frames",
         min_value=1, step=1, value=1,
+        key="vm_frames_input",
         help="Number of frames available in physical memory."
     )
 
@@ -862,9 +977,9 @@ elif page == "Virtual Memory":
     st.sidebar.caption("Enter page reference string separated by commas.")
     vm_pages_input = st.sidebar.text_input(
         "Page Reference String",
-        value="",
         placeholder="e.g. 7, 0, 1, 2, 0, 3",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="vm_pages_input"
     )
 
     try:
@@ -1020,21 +1135,45 @@ elif page == "Compare":
 
     if section == "CPU Scheduling":
         st.subheader("CPU Scheduling — Algorithm Comparison")
-        st.caption("Runs all CPU scheduling algorithms on the same process list. Priority and Quantum values, if present, are ignored by algorithms that don't use them.")
+        st.caption("Runs all CPU scheduling algorithms on the same process list.")
 
-        if st.session_state.processes:
+        # Hierarchy rule (informational only — does NOT gate the button):
+        # - Whether the process list carries a "priority" field is what actually
+        #   determines whether Priority algorithms can be included in the backend's
+        #   comparison. This is driven by the data itself, not by which algorithm
+        #   label was last selected, so it's correct no matter how the user got here.
+        # - The compare button should ALWAYS be enabled once processes exist —
+        #   /schedule/analyze runs whatever it can and simply skips/handles the
+        #   algorithms that don't apply. The warning below is just a heads-up,
+        #   not a hard gate.
+        has_processes = len(st.session_state.processes) > 0
+        has_priority_data = any("priority" in p for p in st.session_state.processes)
+
+        if st.session_state.last_algorithm:
+            st.caption(f"Currently selected on Scheduler page: **{st.session_state.last_algorithm}**")
+
+        if has_processes:
             st.markdown(f"**Processes from Scheduler page:** {len(st.session_state.processes)}")
             for p in st.session_state.processes:
                 if "priority" in p:
                     st.text(f"{p['pid']}  |  Arrival: {p['arrival_time']}  |  Burst: {p['burst_time']}  |  Priority: {p['priority']}")
                 else:
                     st.text(f"{p['pid']}  |  Arrival: {p['arrival_time']}  |  Burst: {p['burst_time']}")
+
+            if not has_priority_data:
+                st.warning(
+                    "Your process list doesn't have priority values yet, so Priority algorithms "
+                    "will be excluded from this comparison (Round Robin and the rest will still run). "
+                    "To include Priority algorithms, add processes with priority on the Scheduler page first."
+                )
         else:
             st.info("No processes added yet. Go to the Scheduler page to add processes first.")
 
         st.divider()
 
-        if st.button("▶ Run CPU Compare", type="primary", disabled=len(st.session_state.processes) == 0, key="cpu_compare_btn"):
+        cpu_compare_disabled = not has_processes
+
+        if st.button("▶ Run CPU Compare", type="primary", disabled=cpu_compare_disabled, key="cpu_compare_btn"):
             with st.status("Running CPU comparison...", expanded=True) as status:
                 try:
                     st.write("Sending request to /schedule/analyze...")
@@ -1125,8 +1264,28 @@ elif page == "Compare":
             st.markdown("**Parameters from Mass Storage page:**")
             st.text(f"Initial Head Position: {params['head']}")
             st.text(f"Number of Tracks: {params['number_of_tracks']}")
-            st.text(f"Direction: {params['direction']}")
             st.text(f"Cylinder Requests: {params['requests_input']}")
+
+            # Direction handling:
+            # Whether direction should be an editable input or a read-only display
+            # depends on the algorithm CURRENTLY SELECTED on the Mass Storage page
+            # (sticky_disk_algorithm) — not on whichever algorithm was last actually
+            # run (last_disk_algorithm). Those are different things: a user can
+            # switch the Mass Storage dropdown to SCAN without clicking Run again,
+            # and this page should reflect that immediately. FCFS/SSTF never have
+            # a direction concept at all, so they always get the editable input.
+            no_direction_algos = ["FCFS", "SSTF"]
+            current_disk_algorithm = st.session_state.sticky_disk_algorithm
+            if current_disk_algorithm in no_direction_algos:
+                st.caption(f"{current_disk_algorithm} doesn't use direction. Select one below to include SCAN/C-SCAN/LOOK/C-LOOK in the comparison.")
+                cmp_direction = st.selectbox(
+                    "Direction for comparison",
+                    ["right", "left"],
+                    key="cmp_direction_extra"
+                )
+            else:
+                cmp_direction = params["direction"]
+                st.text(f"Direction: {cmp_direction}")
 
             try:
                 cmp_requests_list = [int(r.strip()) for r in params["requests_input"].split(",") if r.strip()]
@@ -1134,8 +1293,9 @@ elif page == "Compare":
                 st.error("Invalid request data from Mass Storage page.")
                 cmp_requests_list = []
         else:
-            st.info("No parameters set yet. Go to the Mass Storage page first to set head position, tracks, direction, and requests.")
+            st.info("No parameters set yet. Go to the Mass Storage page first.")
             cmp_requests_list = []
+            cmp_direction = "right"
 
         st.divider()
 
@@ -1144,7 +1304,7 @@ elif page == "Compare":
                 "head": int(st.session_state.disk_params["head"]),
                 "requests": cmp_requests_list,
                 "number_of_tracks": int(st.session_state.disk_params["number_of_tracks"]),
-                "direction": st.session_state.disk_params["direction"],
+                "direction": cmp_direction,
             }
 
             with st.status("Running disk comparison...", expanded=True) as status:
@@ -1234,14 +1394,3 @@ elif page == "Recommend":
     # result = response.json()
     # st.write(f"Best Algorithm: {result['best_algorithm']}")
     # st.write(f"Reason: {result['reason']}")
-
-# -------------------------------------------------------------
-# PAGE: DEADLOCK
-# -------------------------------------------------------------
-elif page == "Deadlock":
-    st.title("Deadlock Detection")
-    st.caption("Banker's Algorithm — resource allocation and deadlock detection.")
-    st.divider()
-    st.info("Pending scope confirmation - Banker's Algorithm UI placeholder (Week 3).")
-    # from components.rag import render_rag
-    # st.plotly_chart(render_rag(allocation, max_matrix, available))
