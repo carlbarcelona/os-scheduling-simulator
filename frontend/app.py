@@ -526,35 +526,108 @@ elif page == "Mass Storage":
             # Seek pattern visualization — Plotly line chart
             # Matches OS textbook standard: cylinder position on X-axis,
             # time/step on Y-axis going downward (top = step 0, bottom = last step)
-            # The backend marks the C-SCAN / C-LOOK boundary jump explicitly as "?"
-            # inside the sequence array — we detect that literal marker (not inferred
-            # from distance) and render the jump segment as dashed, matching the
-            # textbook diagram convention. Numeric segments stay solid.
+            #
+            # Two INDEPENDENT display rules (confirmed against the OS textbook
+            # diagram, not inferred from numbers alone — these are properties of
+            # the ALGORITHM, not something derivable from the sequence values):
+            #   1. "?" LABELING — only algorithms that physically sweep all the
+            #      way to a disk boundary (SCAN, C-SCAN) show that boundary point
+            #      labeled "?" instead of its real track number. LOOK/C-LOOK
+            #      never touch the physical edge (they reverse/jump at the
+            #      farthest REQUEST), so this never applies to them.
+            #   2. DASHING — reserved specifically for the "C" algorithms'
+            #      wraparound jump (C-SCAN, C-LOOK), where the head leaves one
+            #      end of the disk and reappears elsewhere without passing
+            #      through the space between. A plain reversal-in-place (SCAN,
+            #      LOOK changing direction) is continuous physical movement and
+            #      stays solid even though nothing is serviced exactly at the
+            #      turn point.
+            # These two rules are independent — SCAN gets "?" but never dashes;
+            # C-LOOK dashes but never shows "?" (it has no edge visit at all).
             st.subheader("Seek Pattern")
             sequence = disk_result.get("sequence", [])
             if sequence:
                 import plotly.graph_objects as go
 
-                # Find index of the literal "?" marker, if present
-                marker_idx = None
-                for i, val in enumerate(sequence):
-                    if val == "?":
-                        marker_idx = i
+                EDGE_TOUCHING_ALGOS = {"SCAN", "C-SCAN"}
+                JUMP_ALGOS = {"C-SCAN", "C-LOOK"}
+                touches_edge = disk_algorithm in EDGE_TOUCHING_ALGOS
+                is_jump_algo = disk_algorithm in JUMP_ALGOS
+
+                # Backward-compat: the current real backend still emits literal
+                # "?" strings in sequence for C-SCAN (a known bug — see disk
+                # algorithm notes). Resolve those to real numeric positions
+                # first, so the rest of this logic only ever deals with
+                # numbers — "?" becomes purely a DISPLAY LABEL we compute
+                # ourselves below, never a value baked into the data.
+                max_track = number_of_tracks - 1
+                # Resolve "?" runs POSITIONALLY, not independently per-index —
+                # a run of consecutive "?" (C-SCAN emits exactly two) means:
+                # the FIRST one in the run = the edge being approached, the
+                # LAST one = the edge being departed from after the wrap.
+                # Resolving each "?" independently from its immediate neighbors
+                # breaks when a neighbor is ALSO still "?" (unresolved) at the
+                # time you look at it — both placeholders in a 2-long run would
+                # otherwise see the same surrounding real values and resolve
+                # identically, which is wrong.
+                numeric_sequence = list(sequence)
+                i = 0
+                while i < len(numeric_sequence):
+                    if numeric_sequence[i] == "?":
+                        run_start = i
+                        while i < len(numeric_sequence) and numeric_sequence[i] == "?":
+                            i += 1
+                        run_end = i  # exclusive
+                        prev_real = numeric_sequence[run_start - 1] if run_start > 0 else 0
+                        next_real = numeric_sequence[run_end] if run_end < len(numeric_sequence) else max_track
+                        entry_edge = max_track if prev_real >= (max_track / 2) else 0
+                        exit_edge = max_track if next_real >= (max_track / 2) else 0
+                        for j in range(run_start, run_end):
+                            numeric_sequence[j] = entry_edge if j == run_start else exit_edge
+                    else:
+                        i += 1
+
+                # Find the single reversal point: first index where the sweep
+                # direction flips. C-SCAN/C-LOOK have exactly one (the jump);
+                # SCAN/LOOK have exactly one too (the in-place turn); FCFS/SSTF
+                # may have none, or several (they're not monotonic sweeps at
+                # all) — in that case there's nothing to dash or label anyway.
+                direction_param = disk_result.get("direction", "right")
+                reversal_idx = None
+                for i in range(len(numeric_sequence) - 1):
+                    if direction_param == "right" and numeric_sequence[i + 1] < numeric_sequence[i]:
+                        reversal_idx = i
+                        break
+                    if direction_param == "left" and numeric_sequence[i + 1] > numeric_sequence[i]:
+                        reversal_idx = i
                         break
 
-                if marker_idx is not None:
-                    # Points before the marker, and points after — "?" itself is not
-                    # plotted. NOTE: filter out value == "?" explicitly, not just by
-                    # index relative to the first marker — C-SCAN emits the marker as
-                    # TWO consecutive "?" entries (see cscan_disk's build_disk_result),
-                    # so index-only filtering would let the second "?" slip into
-                    # `after` as a literal string mixed into a numeric axis.
-                    before = [(v, s) for s, v in enumerate(sequence) if s < marker_idx and v != "?"]
-                    after = [(v, s) for s, v in enumerate(sequence) if s > marker_idx and v != "?"]
+                # Build display labels — start from real numbers, override
+                # with "?" only at genuine edge-visit points, only for
+                # EDGE_TOUCHING_ALGOS.
+                display_labels = [str(v) for v in numeric_sequence]
+                if touches_edge and reversal_idx is not None:
+                    if direction_param == "right" and numeric_sequence[reversal_idx] == max_track:
+                        display_labels[reversal_idx] = "?"
+                    elif direction_param == "left" and numeric_sequence[reversal_idx] == 0:
+                        display_labels[reversal_idx] = "?"
+                    # The point right after a wrap (C-SCAN only) may be the
+                    # opposite boundary too, if no real request sits there.
+                    if reversal_idx + 1 < len(numeric_sequence):
+                        nxt = numeric_sequence[reversal_idx + 1]
+                        original_requests = disk_result.get("requests", [])
+                        if direction_param == "right" and nxt == 0 and 0 not in original_requests:
+                            display_labels[reversal_idx + 1] = "?"
+                        elif direction_param == "left" and nxt == max_track and max_track not in original_requests:
+                            display_labels[reversal_idx + 1] = "?"
 
-                    fig = go.Figure()
+                fig = go.Figure()
 
-                    # Solid segment before the boundary jump
+                if is_jump_algo and reversal_idx is not None:
+                    # Split into solid-before, dashed-jump, solid-after.
+                    before = [(v, s) for s, v in enumerate(numeric_sequence) if s <= reversal_idx]
+                    after = [(v, s) for s, v in enumerate(numeric_sequence) if s > reversal_idx]
+
                     if before:
                         fig.add_trace(go.Scatter(
                             x=[p[0] for p in before],
@@ -562,11 +635,11 @@ elif page == "Mass Storage":
                             mode="lines+markers",
                             line=dict(color="#00ff9d", width=2),
                             marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                            text=[display_labels[p[1]] for p in before],
+                            hovertemplate="%{text}<extra></extra>",
                             showlegend=False,
                         ))
 
-                    # Dashed connector spanning the "?" boundary touch —
-                    # connects last point before the marker to first point after it
                     if before and after:
                         fig.add_trace(go.Scatter(
                             x=[before[-1][0], after[0][0]],
@@ -576,7 +649,6 @@ elif page == "Mass Storage":
                             showlegend=False,
                         ))
 
-                    # Solid segment after the boundary jump
                     if after:
                         fig.add_trace(go.Scatter(
                             x=[p[0] for p in after],
@@ -584,19 +656,34 @@ elif page == "Mass Storage":
                             mode="lines+markers",
                             line=dict(color="#00ff9d", width=2),
                             marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                            text=[display_labels[p[1]] for p in after],
+                            hovertemplate="%{text}<extra></extra>",
                             showlegend=False,
                         ))
                 else:
-                    # FCFS, SSTF, SCAN, LOOK — no "?" marker, single continuous solid path
-                    fig = go.Figure()
+                    # FCFS, SSTF, SCAN, LOOK — single continuous solid path,
+                    # even if it touches the edge (SCAN) or reverses (LOOK).
                     fig.add_trace(go.Scatter(
-                        x=list(sequence),
-                        y=list(range(len(sequence))),
+                        x=numeric_sequence,
+                        y=list(range(len(numeric_sequence))),
                         mode="lines+markers",
                         line=dict(color="#00ff9d", width=2),
                         marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                        text=display_labels,
+                        hovertemplate="%{text}<extra></extra>",
                         showlegend=False,
                     ))
+
+                # Override the x-axis tick at the edge position to show "?"
+                # instead of the real number, for algorithms that touch the
+                # edge — purely a label swap, the point's true plotted
+                # position is unchanged.
+                tickvals, ticktext = None, None
+                if touches_edge:
+                    edge_val = max_track if direction_param == "right" else 0
+                    base_ticks = sorted(set(numeric_sequence) | {0, max_track})
+                    tickvals = base_ticks
+                    ticktext = ["?" if t == edge_val else str(t) for t in base_ticks]
 
                 fig.update_layout(
                     xaxis_title="Cylinder Position",
@@ -604,14 +691,21 @@ elif page == "Mass Storage":
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#e2e8f0"),
-                    xaxis=dict(gridcolor="#2a2d3e", range=[0, number_of_tracks]),
+                    xaxis=dict(
+                        gridcolor="#2a2d3e",
+                        range=[0, number_of_tracks],
+                        tickvals=tickvals,
+                        ticktext=ticktext,
+                    ),
                     yaxis=dict(gridcolor="#2a2d3e", autorange="reversed"),
                     showlegend=False,
                     margin=dict(l=40, r=20, t=20, b=40),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                if marker_idx is not None:
-                    st.caption("Dashed segment = head jump-back at boundary (no service), solid = servicing requests.")
+                if is_jump_algo and reversal_idx is not None:
+                    st.caption("Dashed segment = wraparound jump (no service along the way), solid = servicing requests.")
+                elif touches_edge:
+                    st.caption("'?' marks the disk boundary the sweep reaches — head physically travels there and reverses in place (no jump).")
 
         with tab_movements:
             movements = disk_result.get("movements", [])
