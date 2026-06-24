@@ -66,9 +66,9 @@ def schedule_np_sjf(request: ScheduleRequest):
     return priority_non_preemptive(processes)
 
 @app.post("/schedule/round_robin", response_model=ScheduleResult)
-def schedule_np_sjf(request: ScheduleRequest):
+def schedule_round_robin(request: ScheduleRequest):
     processes = [details.model_dump() for details in request.processes]
-    return round_robin(processes)
+    return round_robin(processes, request.quantum or 2)
 
 @app.post("/schedule/analyze", response_model=ScheduleAnalyzeResult)
 def schedule_analyze(request: ScheduleRequest):
