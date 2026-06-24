@@ -1,20 +1,5 @@
 from functools import reduce
 
-processes = []
-process_count = 0
-
-total_memory = int(input("Enter total memory capacity (K): "))
-partition_size = int(input("Enter fixed partition size (K): "))
-fit_strategy = input("Enter fit strategy (first/best/worst/next): ").lower()
-
-while True:
-    process_count += 1
-    size = int(input(f"Enter size of Process {process_count} (K): "))
-    burst_time = float(input(f"Enter burst time of Process {process_count}: "))
-    processes.append({"pid": f"P{process_count}", "size": size, "burst_time": burst_time})
-    if input("Add more entries (y/n): ").lower() != "y":
-        break
-
 def find_partition_mft(partitions, size, strategy):
     candidates = [(i, p) for i, p in enumerate(partitions) if p["free"] and p["size"] >= size]
     if not candidates:
@@ -115,24 +100,3 @@ def mft(total_memory, partition_size, processes, fit_strategy):
         "cpu_utilization": (cpu_busy / current_time) * 100 if current_time > 0 else 0,
         "total_internal_fragmentation": total_internal_frag
     }
-
-result = mft(total_memory, partition_size, processes, fit_strategy)
-print(f"\n=== MFT Memory Management ({result['strategy'].upper()} Fit) ===")
-print(f"Partitions: {result['num_partitions']} x {result['partition_size']}K")
-print(f"Allocated: {[a['pid'] for a in result['allocated']]}")
-print(f"Failed: {result['failed'] if result['failed'] else 'None'}")
-print(f"Avg Burst Time: {result['avg_burst_time']:.2f}")
-print(f"CPU Utilization: {result['cpu_utilization']:.2f}%")
-print(f"Total Internal Fragmentation: {result['total_internal_fragmentation']}K")
-print(f"\nTimeline:")
-for entry in result["timeline"]:
-    event = entry["event"]
-    if event == "allocated":
-        print(f"\n  [ALLOCATED] {entry['pid']} | Size: {entry['size']}K | BT: {entry['burst_time']} | Partition: {entry['partition_id']} | Frag: {entry['internal_frag']}K | {entry['start_time']} --> {entry['end_time']}")
-    elif event == "removed":
-        print(f"\n  [REMOVED] {entry['pid']} at time {entry['time']}")
-    elif event == "allocation_failed":
-        print(f"\n  [FAILED] {entry['pid']} at time {entry['time']}")
-    elif event == "completed":
-        print(f"\n  [COMPLETED] Total Free: {entry['total_free']}K | Internal Frag: {entry['total_internal_fragmentation']}K")
-    print(f"  Memory Map: {entry['memory_map']}")
