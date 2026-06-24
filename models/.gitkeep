@@ -1,0 +1,2 @@
+# Keep this folder in git; the GGUF model files themselves are gitignored.
+# The chatbot (frontend/llm.py) loads/downloads the Phi-3 GGUF here.

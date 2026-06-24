@@ -11,4 +11,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "streamlit>=1.57.0",
+    # Local LLM runtime for the chatbot (CPU). If wheels aren't found, add the
+    # extra index: https://abetlen.github.io/llama-cpp-python/whl/cpu
+    "llama-cpp-python>=0.3.0",
 ]

@@ -12,3 +12,8 @@ wheels/
 OS_proj_schema_compilation.txt
 TASKS.md
 PRD.md
+
+# Local LLM models (multi-GB GGUF files — never commit; see frontend/llm.py)
+models/*
+!models/.gitkeep
+*.gguf
