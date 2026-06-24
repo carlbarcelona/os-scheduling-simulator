@@ -1,14 +1,3 @@
-head = int(input("Enter initial head position: "))
-disk_size = int(input("Enter disk size: "))
-direction = input("Enter direction (left/right): ").lower()
-requests = []
-print("Enter disk request queue (type 'done' to stop):")
-while True:
-    r = input("Enter request: ")
-    if r.lower() == "done":
-        break
-    requests.append(int(r))
-
 def cscan_disk(head, disk_size, requests, direction):
     left = sorted([r for r in requests if r < head], reverse=True)
     right = sorted([r for r in requests if r >= head])
@@ -30,9 +19,3 @@ def cscan_disk(head, disk_size, requests, direction):
         "movements": movements,
         "total_head_movement": total_movement
     }
-
-result = cscan_disk(head, disk_size, requests, direction)
-print(f"\n=== {result['algorithm']} ===")
-print(f"Head Movement: {' → '.join(map(str, result['sequence']))}")
-print(f"Movements: {', '.join(result['movements'])}")
-print(f"Total Head Movement: {result['total_head_movement']}")

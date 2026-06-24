@@ -9,7 +9,7 @@ from algorithms.cpu_scheduling.sjf_pree import sjf_preemptive
 from algorithms.cpu_scheduling.priority_pree import priority_preemptive
 from algorithms.cpu_scheduling.priority_nonpree import priority_non_preemptive
 from algorithms.cpu_scheduling.round_robin import round_robin
-from algorithms.cpu_scheduling.mlfq import mlfq
+# from algorithms.cpu_scheduling.mlfq import mlfq  # mlfq.py not implemented yet
 
 # For Mass Storage
 from algorithms.mass_storage.fcfs_disk import fcfs_disk
