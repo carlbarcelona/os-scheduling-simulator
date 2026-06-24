@@ -1,13 +1,3 @@
-head = int(input("Enter initial head position: "))
-direction = input("Enter direction (left/right): ").lower()
-requests = []
-print("Enter disk request queue (type 'done' to stop):")
-while True:
-    r = input("Enter request: ")
-    if r.lower() == "done":
-        break
-    requests.append(int(r))
-
 def build_result(algorithm, head, sequence):
     total = sum(
         abs(sequence[i] - sequence[i+1])
@@ -48,6 +38,3 @@ def print_disk_result(result):
     for m in result["movements"]:
         print(f"  {str(m['from']):<10} {str(m['to']):<10} {str(m['distance'])}")
     print(f"\nTotal Head Movement: {result['total_head_movement']} (excluding border traversal)")
-
-result = scan_disk(head, requests, direction)
-print_disk_result(result)
