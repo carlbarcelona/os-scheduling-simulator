@@ -13,6 +13,7 @@ from algorithms.cpu_scheduling.round_robin import round_robin
 
 # For Mass Storage
 from algorithms.mass_storage.fcfs_disk import fcfs_disk
+from algorithms.mass_storage.sstf_disk import sstf_disk
 from algorithms.mass_storage.c_look import clook_disk
 from algorithms.mass_storage.c_scan_disk import cscan_disk
 from algorithms.mass_storage.look_disk import look_disk
@@ -77,9 +78,14 @@ def disk_fcfs(request: DiskRequest):
 
 @app.post("/disk/sstf", response_model=DiskResult)
 def disk_sstf(request: DiskRequest):
-    pass # Empty
- 
- 
+    return sstf_disk(
+        head = request.head,
+        requests = request.requests,
+        number_of_tracks = request.number_of_tracks,
+    )
+
+
+
 @app.post("/disk/scan", response_model=DiskResult)
 def disk_scan(request: DiskRequest):
     return scan_disk(

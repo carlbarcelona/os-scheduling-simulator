@@ -1,26 +1,28 @@
-def build_result(algorithm, head, sequence):
-    total = sum(abs(sequence[i] - sequence[i-1]) for i in range(1, len(sequence)))
-    movements = [{"from": sequence[i], "to": sequence[i+1], "distance": abs(sequence[i+1] - sequence[i])} for i in range(len(sequence)-1)]
+def build_disk_result(head, sequence):
+    movements = [
+        {
+            "from_cylinder": sequence[i],
+            "to_cylinder": sequence[i + 1],
+            "distance": abs(sequence[i + 1] - sequence[i]),
+        }
+        for i in range(len(sequence) - 1)
+    ]
     return {
-        "algorithm": algorithm,
         "initial_head": head,
         "sequence": sequence,
         "movements": movements,
-        "total_head_movement": total
+        "total_head_movement": sum(m["distance"] for m in movements),
     }
 
-def look_disk(head, requests, direction):
-    left = sorted([r for r in requests if r < head], reverse=True)
-    right = sorted([r for r in requests if r >= head])
-    sequence = [head] + (left + right if direction == "left" else right + left)
-    return build_result("LOOK", head, sequence)
 
-def print_disk_result(result):
-    print(f"\n=== {result['algorithm']} Disk Scheduling ===")
-    print(f"Initial Head: {result['initial_head']}")
-    print(f"Sequence: {' → '.join(map(str, result['sequence']))}")
-    print(f"\n{'From':<10} {'To':<10} {'Distance'}")
-    print("-" * 30)
-    for m in result["movements"]:
-        print(f"  {str(m['from']):<10} {str(m['to']):<10} {str(m['distance'])}")
-    print(f"\nTotal Head Movement: {result['total_head_movement']}")
+def look_disk(head, requests, direction="right", number_of_tracks=0):
+    """Like SCAN but only travels as far as the last request (no boundary)."""
+    left = sorted(r for r in requests if r < head)
+    right = sorted(r for r in requests if r >= head)
+
+    if direction == "left":
+        sequence = [head] + list(reversed(left)) + right
+    else:
+        sequence = [head] + right + list(reversed(left))
+
+    return build_disk_result(head, sequence)
