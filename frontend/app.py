@@ -543,9 +543,14 @@ elif page == "Mass Storage":
                         break
 
                 if marker_idx is not None:
-                    # Points before the marker, and points after — "?" itself is not plotted
-                    before = [(v, s) for s, v in enumerate(sequence) if s < marker_idx]
-                    after = [(v, s) for s, v in enumerate(sequence) if s > marker_idx]
+                    # Points before the marker, and points after — "?" itself is not
+                    # plotted. NOTE: filter out value == "?" explicitly, not just by
+                    # index relative to the first marker — C-SCAN emits the marker as
+                    # TWO consecutive "?" entries (see cscan_disk's build_disk_result),
+                    # so index-only filtering would let the second "?" slip into
+                    # `after` as a literal string mixed into a numeric axis.
+                    before = [(v, s) for s, v in enumerate(sequence) if s < marker_idx and v != "?"]
+                    after = [(v, s) for s, v in enumerate(sequence) if s > marker_idx and v != "?"]
 
                     fig = go.Figure()
 
@@ -852,7 +857,30 @@ elif page == "Memory":
                 for snap_idx, entry in enumerate(timeline):
                     memory_map = entry.get("memory_map", [])
                     event = entry.get("event", "")
-                    label = f"{snap_idx+1}: {event}"
+                    pid = entry.get("pid")
+
+                    # Build a human-readable label from the real mvt.py event
+                    # shapes (confirmed against dev_sched source): "allocated"/
+                    # "retry_allocated" carry pid+size, "allocation_failed"/
+                    # "removed" carry pid only, "compacted"/"completed" carry
+                    # neither. Raw event strings alone ("3: allocation_failed")
+                    # don't say WHICH process — fold the pid in when present.
+                    if event in ("allocated", "retry_allocated") and pid:
+                        size = entry.get("size")
+                        prefix = "Retry allocated" if event == "retry_allocated" else "Allocated"
+                        event_label = f"{prefix} {pid} ({size}K)" if size is not None else f"{prefix} {pid}"
+                    elif event == "allocation_failed" and pid:
+                        event_label = f"Failed: {pid}"
+                    elif event == "removed" and pid:
+                        event_label = f"Removed {pid}"
+                    elif event == "compacted":
+                        event_label = "Compacted"
+                    elif event == "completed":
+                        event_label = "Completed"
+                    else:
+                        event_label = event or "—"
+
+                    label = f"{snap_idx+1}: {event_label}"
 
                     for block in memory_map:
                         pid_key = "FREE" if block.get("free", True) else block["pid"]
