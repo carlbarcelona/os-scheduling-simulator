@@ -8,3 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+
+OS_proj_schema_compilation.txt
+TASKS.md
+PRD.md
