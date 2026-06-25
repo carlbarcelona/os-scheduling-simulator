@@ -45,3 +45,25 @@ docker compose up --build
 |----------|----------------------------|
 | Frontend | http://localhost:8501      |
 | API docs | http://localhost:8000/docs |
+
+## Desktop build (.exe)
+
+A single double-click executable that starts the backend + UI internally and opens
+your browser at the app. Built with PyInstaller; the build env is the `frontend`
+project (it carries both the frontend and backend runtime deps plus PyInstaller).
+
+```bash
+cd packaging
+uv run --project ../frontend pyinstaller os_sim.spec
+# -> dist/OS-Simulator.exe
+```
+
+Run it by double-clicking `dist/OS-Simulator.exe` (a console window shows startup
+logs, then a browser tab opens).
+
+**AI chatbot model:** the ~2.4 GB Phi-3 GGUF model is **not** bundled. On first use of
+the Chatbot, the app detects whether the model is present and, if not, offers to
+download it into a `models/` folder **next to the executable**. Once downloaded it's
+reused on the next launch. Without the model (or if the native LLM runtime can't
+load), the chatbot falls back to an offline rule-based parser and the simulator
+works fully offline regardless.
