@@ -1,63 +1,35 @@
-pages = []
-print("Enter page reference string (type 'done' to stop):")
-while True:
-    page = input("Enter page: ")
-    if page.lower() == "done":
-        break
-    pages.append(int(page))
+from functools import reduce
 
-frames = int(input("Enter number of frames: "))
 
-def optimal_pra(pages, frames):
-    frame_list = []
-    page_faults = 0
-    timeline = []
+def optimal_pra(data):
+    pages, frames = data["pages"], data["frames"]
 
-    for i, page in enumerate(pages):
-        fault = False
-        if page not in frame_list:
-            page_faults += 1
-            fault = True
-            if len(frame_list) < frames:
-                frame_list.append(page)
-            else:
-                # Find page used farthest in the future
-                future = pages[i + 1:]
-                farthest = -1
-                replace = frame_list[0]
-                for f in frame_list:
-                    if f not in future:
-                        replace = f
-                        break
-                    idx = future.index(f)
-                    if idx > farthest:
-                        farthest = idx
-                        replace = f
-                frame_list[frame_list.index(replace)] = page
+    def find_replace(frame_list, future):
+        # Replace the page whose next use is farthest away (or never used again)
+        def next_use(p):
+            return future.index(p) if p in future else float("inf")
+        return max(frame_list, key=next_use)
 
-        timeline.append({
-            "page": page,
-            "frames": frame_list.copy(),
-            "fault": fault
-        })
+    def process_page(acc, args):
+        i, page = args
+        frame_list, timeline, faults = acc
+        if page in frame_list:
+            return frame_list, timeline + [{"page": page, "frames_state": frame_list.copy(), "fault": False, "frequencies": None}], faults
 
+        future = pages[i + 1:]
+        if len(frame_list) < frames:
+            new_frames = frame_list + [page]
+        else:
+            victim = find_replace(frame_list, future)
+            new_frames = [page if p == victim else p for p in frame_list]
+
+        return new_frames, timeline + [{"page": page, "frames_state": new_frames.copy(), "fault": True, "frequencies": None}], faults + 1
+
+    _, timeline, faults = reduce(process_page, enumerate(pages), ([], [], 0))
     return {
-        "algorithm": "Optimal",
         "frames": frames,
         "pages": pages,
         "timeline": timeline,
-        "page_fault_count": page_faults
+        "page_fault_count": faults,
+        "page_fault_rate": round(faults / len(pages), 2),
     }
-
-def print_pra_result(result):
-    print(f"\n=== {result['algorithm']} ===")
-    print(f"Frames: {result['frames']} | Page Fault Count: {result['page_fault_count']}")
-    print(f"\n{'Page':<6} {'Frames':<30} {'Fault'}")
-    print("-" * 45)
-    for entry in result["timeline"]:
-        frames_str = str(entry["frames"])
-        fault_str = "✗ FAULT" if entry["fault"] else "✓"
-        print(f"{entry['page']:<6} {frames_str:<30} {fault_str}")
-
-result = optimal_pra(pages, frames)
-print_pra_result(result)

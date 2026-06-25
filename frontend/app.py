@@ -1285,8 +1285,9 @@ elif page == "Compare":
             if not has_priority_data:
                 st.warning(
                     "Your process list doesn't have priority values yet, so Priority algorithms "
-                    "will be excluded from this comparison (Round Robin and the rest will still run). "
-                    "To include Priority algorithms, add processes with priority on the Scheduler page first."
+                    "will run with every process treated as equal priority (priority 0). "
+                    "To give Priority algorithms meaningful results, add processes with priority "
+                    "on the Scheduler page first."
                 )
         else:
             st.info("No processes added yet. Go to the Scheduler page to add processes first.")
@@ -1325,7 +1326,7 @@ elif page == "Compare":
 
                 except requests.exceptions.ConnectionError:
                     status.update(label="Cannot connect to API.", state="error", expanded=False)
-                    st.error("Cannot connect to the API. Is the backend running? (/schedule/analyze endpoint pending from Backend Architect)")
+                    st.error("Cannot connect to the API. Is the backend running?")
                     st.session_state.compare_results = None
 
         if st.session_state.compare_results is not None:
@@ -1373,7 +1374,7 @@ elif page == "Compare":
                 st.json(results)
 
         else:
-            st.info("CPU comparison results will display here once /schedule/analyze is available from Backend Architect.")
+            st.info("Run a comparison above to see CPU scheduling results here.")
 
     elif section == "Disk Scheduling":
         st.subheader("Disk Scheduling — Algorithm Comparison")
@@ -1454,7 +1455,7 @@ elif page == "Compare":
 
                 except requests.exceptions.ConnectionError:
                     status.update(label="Cannot connect to API.", state="error", expanded=False)
-                    st.error("Cannot connect to the API. Is the backend running? (/disk/analyze endpoint pending from Backend Architect)")
+                    st.error("Cannot connect to the API. Is the backend running?")
                     st.session_state.disk_compare_results = None
 
         if st.session_state.disk_compare_results is not None:
@@ -1502,7 +1503,7 @@ elif page == "Compare":
                 st.json(disk_results)
 
         else:
-            st.info("Disk comparison results will display here once /disk/analyze is available from Backend Architect.")
+            st.info("Run a comparison above to see disk scheduling results here.")
 
 # -------------------------------------------------------------
 # PAGE: RECOMMEND

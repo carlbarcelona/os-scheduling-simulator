@@ -154,3 +154,41 @@ class DiskResult(BaseModel):
 
 class DiskAnalyzeResult(BaseModel):
     results: dict       # keys: "fcfs", "sstf", "scan", "cscan", "look", "clook"
+
+# ─────────────────────────────────────────
+# MEMORY MANAGEMENT — MVT
+# ─────────────────────────────────────────
+
+class MemoryProcess(BaseModel):
+    pid: str
+    size: int
+    burst_time: float
+
+class MemoryRequest(BaseModel):
+    """Input for MVT memory allocation simulation."""
+    total_memory: int
+    fit_strategy: str = "first"   # first | best | worst
+    processes: List[MemoryProcess]
+
+# ─────────────────────────────────────────
+# VIRTUAL MEMORY — PAGE REPLACEMENT
+# ─────────────────────────────────────────
+
+class PageReplacementRequest(BaseModel):
+    """Input for all page replacement algorithms."""
+    pages: List[int]
+    frames: int
+
+    @field_validator("frames")
+    @classmethod
+    def check_frames_positive(cls, value):
+        if value <= 0:
+            raise ValueError("frames must be greater than 0")
+        return value
+
+    @field_validator("pages")
+    @classmethod
+    def check_pages_not_empty(cls, value):
+        if len(value) == 0:
+            raise ValueError("pages list cannot be empty")
+        return value

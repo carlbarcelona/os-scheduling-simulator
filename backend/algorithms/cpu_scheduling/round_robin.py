@@ -16,7 +16,7 @@ process_count = 0
 
 # quantum = int(input("Enter time quantum: "))
 
-def round_robin(processes, quantum):
+def round_robin(processes, quantum=2):
     remaining = [{**t, "remaining_time": t["burst_time"]} for t in processes]
     remaining.sort(key=lambda t: t["arrival_time"])
 
