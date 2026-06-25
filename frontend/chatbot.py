@@ -65,6 +65,43 @@ CPU_ALGO_API = {
 }
 VALID_ALGOS = set(CPU_ALGO_API)
 
+# Grammar-friendly JSON schema for the model's action object. Constrains output to
+# objects/arrays/enums/primitives only (no null-unions, no regex patterns) so
+# llama.cpp's `from_json_schema` can build a grammar from it — bounding the model
+# to exactly this shape and preventing the truncated/invalid JSON that crashed
+# parsing. Only `message` + `action` are required; everything else is optional and
+# simply omitted when unused.
+ACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "message": {"type": "string"},
+        "action": {
+            "type": "string",
+            "enum": ["add", "clear", "remove", "run", "explain", "none"],
+        },
+        "processes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "string"},
+                    "arrival_time": {"type": "integer"},
+                    "burst_time": {"type": "integer"},
+                    "priority": {"type": "integer"},
+                },
+                "required": ["pid", "arrival_time", "burst_time"],
+            },
+        },
+        "algorithms": {
+            "type": "array",
+            "items": {"type": "string", "enum": list(CPU_ALGO_API)},
+        },
+        "quantum": {"type": "integer"},
+        "remove_pid": {"type": "string"},
+    },
+    "required": ["message", "action"],
+}
+
 WELCOME = (
     "Hi! I'm your scheduling assistant. Describe your CPU workload in plain "
     "English and I'll build the process list for you — no forms needed.\n\n"
@@ -75,39 +112,47 @@ WELCOME = (
 )
 
 SYSTEM_PROMPT = """You are the INPUT PARSER for an OS CPU-scheduling simulator.
-You DO NOT calculate scheduling results, schedules, or metrics — a separate
-backend does that. Your only job is to turn the user's message into one JSON
-action object.
+You DO NOT calculate scheduling results, schedules, or metrics for a workload — a
+separate backend does that. Your job is to turn the user's message into one JSON
+action object. You MAY explain scheduling CONCEPTS in plain English.
 
-Reply with a SINGLE JSON object and nothing else (no prose, no code fences),
-with EXACTLY these keys:
+Reply with a SINGLE JSON object and nothing else (no prose, no code fences). Use
+EXACTLY these keys (omit optional ones you don't need):
 {
   "message": "<one short friendly sentence to the user>",
-  "action": "add" | "clear" | "remove" | "run" | "none",
-  "processes": [{"pid": "P1", "arrival_time": 0, "burst_time": 5, "priority": 0}],
-  "algorithm": "FCFS" | "SJF Non-Preemptive" | "SJF Preemptive" | "Round Robin" | "Priority Non-Preemptive" | "Priority Preemptive" | null,
-  "quantum": null,
-  "remove_pid": null
+  "action": "add" | "clear" | "remove" | "run" | "explain" | "none",
+  "processes": [{"pid": "P1", "arrival_time": 0, "burst_time": 5}],
+  "algorithms": ["FCFS", "SJF Non-Preemptive"],
+  "quantum": 2,
+  "remove_pid": "P2"
 }
+
+"algorithms" is a LIST of zero or more canonical names, EXACTLY from this set
+(never an abbreviation like "SJF"):
+  "FCFS", "SJF Non-Preemptive", "SJF Preemptive", "Round Robin",
+  "Priority Non-Preemptive", "Priority Preemptive"
 
 Rules:
 - Only include processes the user EXPLICITLY described. NEVER invent numbers.
 - Omit "priority" unless the user gave one.
-- "run"/"simulate"/"solve" => action "run".
-- Just adding processes => "add". Clearing the list => "clear" (processes []).
+- "run"/"simulate"/"solve"/"compare"/"provide the results" => action "run".
+- Just adding processes => "add". Clearing the list => "clear".
 - Removing one => "remove" with "remove_pid" (e.g. "P2").
-- Set "algorithm"/"quantum" whenever the user mentions them, with any action.
+- The user may name MULTIPLE algorithms (e.g. "by FCFS and SJF") — list them ALL
+  in "algorithms". Set "quantum" whenever the user mentions one.
+- If the user asks a CONCEPT question (e.g. "what is SJF", "difference between
+  FCFS and Round Robin") and does NOT ask to run, use action "explain" and put a
+  short, correct explanation in "message".
 - If required info is missing (e.g. Round Robin needs a quantum), use action
   "none" and ask for it in "message".
-- "message" must NOT contain any computed schedule, ordering, or metrics.
+- "message" must NEVER contain a computed schedule, execution order, or metric
+  numbers for the user's specific workload — those come ONLY from the backend.
 
 CRITICAL:
 - "processes" must contain ONLY processes described in the user's LATEST message;
-  use [] if none. NEVER reuse processes from earlier example messages.
-- Set "action":"run" ONLY if the user explicitly asks to run/simulate/solve.
-  Otherwise use "add" (when processes are given) or "none".
-- "algorithm" must be null unless the user NAMES one, and must be EXACTLY one of
-  the listed strings (never an abbreviation like "SJF")."""
+  use [] or omit if none. NEVER reuse processes from earlier example messages.
+- Set "action":"run" ONLY if the user explicitly asks to run/simulate/solve/compare.
+  Otherwise use "add" (when processes are given), "explain", or "none"."""
 
 # A few diverse examples to pin the format AND teach the model not to over-act.
 def _ex(user, obj):
@@ -127,9 +172,6 @@ _FEWSHOT = (
                 {"pid": "P1", "arrival_time": 0, "burst_time": 4},
                 {"pid": "P2", "arrival_time": 1, "burst_time": 3},
             ],
-            "algorithm": None,
-            "quantum": None,
-            "remove_pid": None,
         },
     )
     + _ex(
@@ -137,10 +179,31 @@ _FEWSHOT = (
         {
             "message": "Running Round Robin with quantum 3.",
             "action": "run",
-            "processes": [],
-            "algorithm": "Round Robin",
+            "algorithms": ["Round Robin"],
             "quantum": 3,
-            "remove_pid": None,
+        },
+    )
+    + _ex(
+        "P1 burst 3 arrival 1, P2 burst 4 arrival 2, P3 burst 5 arrival 3, by FCFS and SJF provide the results",
+        {
+            "message": "Comparing FCFS and SJF Non-Preemptive on your three processes.",
+            "action": "run",
+            "processes": [
+                {"pid": "P1", "arrival_time": 1, "burst_time": 3},
+                {"pid": "P2", "arrival_time": 2, "burst_time": 4},
+                {"pid": "P3", "arrival_time": 3, "burst_time": 5},
+            ],
+            "algorithms": ["FCFS", "SJF Non-Preemptive"],
+        },
+    )
+    + _ex(
+        "what's the difference between FCFS and Round Robin?",
+        {
+            "message": "FCFS runs each process to completion in arrival order, so a "
+            "long early job can delay everyone (convoy effect). Round Robin gives "
+            "each process a fixed time slice in turn, improving responsiveness at "
+            "the cost of more context switches.",
+            "action": "explain",
         },
     )
     + _ex(
@@ -148,9 +211,6 @@ _FEWSHOT = (
         {
             "message": "Removed P3.",
             "action": "remove",
-            "processes": [],
-            "algorithm": None,
-            "quantum": None,
             "remove_pid": "P3",
         },
     )
@@ -243,6 +303,113 @@ def _run_and_report(parts):
         parts.append(f"⚠️ Backend error: {detail}")
 
 
+def _run_many(algorithms, processes, quantum):
+    """Run each algorithm on the SAME workload via the backend.
+
+    Returns `{algorithm: result}`. Loops the per-algorithm endpoints (not
+    `/schedule/analyze`) so each result carries the full `schedule`/`timeline`
+    the comparison + explanation rely on. Backend/connection errors propagate to
+    the caller, which reports them like `_run_and_report`.
+    """
+    return {algo: _run_simulation(algo, processes, quantum) for algo in algorithms}
+
+
+def _compare_md(results_by_algo):
+    """Markdown comparison table across algorithms, in `_result_md` style."""
+    header = "| Algorithm | Avg Waiting | Avg Turnaround | CPU Util | Execution order |"
+    rows = [header, "|---|---|---|---|---|"]
+    for algo, r in results_by_algo.items():
+        order = " → ".join(b["pid"] for b in r.get("schedule", []))
+        rows.append(
+            f"| {algo} | {r.get('avg_waiting_time', 0):.2f} "
+            f"| {r.get('avg_turnaround_time', 0):.2f} "
+            f"| {r.get('cpu_utilization', 0):.2f}% | {order} |"
+        )
+    table = "\n".join(rows)
+    return f"**Comparison** ✅\n\n{table}\n\n_Open the **Compare** page for the full Gantt charts._"
+
+
+def _explain_results(results_by_algo):
+    """Plain-English explanation of a comparison — grounded in the REAL numbers.
+
+    Names the winner per metric (only quoting values present in backend results)
+    and adds 1–2 qualitative concept notes (convoy effect, RR overhead, SJF
+    optimality). Never invents or derives numbers the backend didn't return.
+    """
+    if len(results_by_algo) < 2:
+        return ""
+
+    best_wait = min(
+        results_by_algo.items(), key=lambda kv: kv[1].get("avg_waiting_time", float("inf"))
+    )
+    best_tat = min(
+        results_by_algo.items(), key=lambda kv: kv[1].get("avg_turnaround_time", float("inf"))
+    )
+
+    lines = ["**Why:**"]
+    lines.append(
+        f"- **{best_wait[0]}** has the lowest average waiting time "
+        f"(**{best_wait[1].get('avg_waiting_time', 0):.2f}**)."
+    )
+    if best_tat[0] == best_wait[0]:
+        lines.append(
+            f"- It also gives the lowest average turnaround time "
+            f"(**{best_tat[1].get('avg_turnaround_time', 0):.2f}**)."
+        )
+    else:
+        lines.append(
+            f"- **{best_tat[0]}** has the lowest average turnaround time "
+            f"(**{best_tat[1].get('avg_turnaround_time', 0):.2f}**)."
+        )
+
+    notes = []
+    if best_wait[0].startswith("SJF"):
+        notes.append(
+            "SJF minimises average waiting time by running shorter bursts first."
+        )
+    if "FCFS" in results_by_algo and best_wait[0] != "FCFS":
+        notes.append(
+            "FCFS serves processes in arrival order, so a long early job can delay "
+            "shorter ones (convoy effect) — pushing its average waiting time up."
+        )
+    if "Round Robin" in results_by_algo and best_wait[0] != "Round Robin":
+        notes.append(
+            "Round Robin improves responsiveness by time-slicing, but the extra "
+            "preemptions tend to raise average waiting time versus a shortest-job policy."
+        )
+    lines += [f"- {n}" for n in notes]
+    return "\n".join(lines)
+
+
+def _run_multi_and_report(parts, algorithms):
+    """Run several algorithms on the current workload; append table + explanation."""
+    if not st.session_state.processes:
+        parts.append("There are no processes to run yet — describe some first.")
+        return
+    if "Round Robin" in algorithms and not st.session_state.get("chat_quantum"):
+        parts.append("Round Robin needs a quantum. Say e.g. `quantum 2`.")
+        return
+    try:
+        results = _run_many(
+            algorithms, st.session_state.processes, st.session_state.get("chat_quantum")
+        )
+        st.session_state.last_algorithm = algorithms[0]
+        parts.append(_compare_md(results))
+        explanation = _explain_results(results)
+        if explanation:
+            parts.append(explanation)
+    except requests.exceptions.ConnectionError:
+        parts.append("⚠️ Couldn't reach the backend. Is the API running?")
+    except requests.exceptions.Timeout:
+        parts.append("⚠️ The backend timed out. Try again.")
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = e.response.json().get("detail", str(e))
+        except Exception:
+            detail = str(e)
+        parts.append(f"⚠️ Backend error: {detail}")
+
+
 def _merge_processes(new_procs):
     """Add/replace processes in the shared list, preserving order."""
     by_pid = {p["pid"]: p for p in st.session_state.processes}
@@ -296,15 +463,43 @@ def _normalize_algo(value):
     return detect_algorithm(str(value))
 
 
+def _normalize_algos(action: dict):
+    """Canonical, de-duplicated algorithm list from the action.
+
+    Accepts the new `algorithms` (list) and the legacy `algorithm` (string), so
+    older callers/few-shots keep working. Order is preserved; the first entry
+    becomes the sticky algorithm.
+    """
+    raw = []
+    listed = action.get("algorithms")
+    if isinstance(listed, list):
+        raw.extend(listed)
+    elif isinstance(listed, str):
+        raw.append(listed)
+    legacy = action.get("algorithm")
+    if legacy:
+        raw.append(legacy)
+
+    out = []
+    for value in raw:
+        canon = _normalize_algo(value)
+        if canon and canon not in out:
+            out.append(canon)
+    return out
+
+
 def apply_action(action: dict):
     """Apply a structured action dict; return extra markdown for the reply."""
     parts = []
 
-    algorithm = _normalize_algo(action.get("algorithm"))
-    if algorithm in VALID_ALGOS:
-        st.session_state.sticky_cpu_algorithm = algorithm
-        st.session_state.last_algorithm = algorithm
-        parts.append(f"Algorithm set to **{algorithm}**.")
+    algorithms = _normalize_algos(action)
+    if algorithms:
+        st.session_state.sticky_cpu_algorithm = algorithms[0]
+        st.session_state.last_algorithm = algorithms[0]
+        if len(algorithms) == 1:
+            parts.append(f"Algorithm set to **{algorithms[0]}**.")
+        else:
+            parts.append("Algorithms set to **" + "**, **".join(algorithms) + "**.")
 
     quantum = action.get("quantum")
     if isinstance(quantum, int) and quantum > 0:
@@ -343,7 +538,11 @@ def apply_action(action: dict):
                 + _processes_md(st.session_state.processes)
             )
         if kind == "run":
-            _run_and_report(parts)
+            if len(algorithms) >= 2:
+                _run_multi_and_report(parts, algorithms)
+            else:
+                # 0 named → sticky; 1 named → already set as sticky above.
+                _run_and_report(parts)
 
     return "\n\n".join(parts)
 
@@ -376,7 +575,7 @@ def _llm_turn(user_text):
     Raises on model/parse failure so parse_message() can fall back to the
     offline rule-based parser.
     """
-    action = llm.chat_json(_llm_messages(user_text))  # grammar-constrained JSON
+    action = llm.chat_json(_llm_messages(user_text), schema=ACTION_SCHEMA)  # grammar-constrained
     natural = str(action.get("message") or "").strip()
     extra = apply_action(action)
     display = "\n\n".join(p for p in [natural, extra] if p) or "Done."
@@ -460,13 +659,66 @@ def detect_algorithm(text):
     return None
 
 
+def detect_algorithms(text):
+    """Return ALL algorithms named in the text (plural form of detect_algorithm).
+
+    Lets the offline path handle "by FCFS and SJF" the same way the LLM path does.
+    Preemptive/non-preemptive is inferred from the whole message, matching
+    detect_algorithm's heuristic.
+    """
+    t = text.lower()
+    pre = "pre" in t and "non" not in t
+    found = []
+
+    def add(a):
+        if a not in found:
+            found.append(a)
+
+    if "fcfs" in t or "first come" in t or "first-come" in t:
+        add("FCFS")
+    if "sjf" in t or "shortest job" in t:
+        add("SJF Preemptive" if pre else "SJF Non-Preemptive")
+    if "priority" in t:
+        add("Priority Preemptive" if pre else "Priority Non-Preemptive")
+    if "round robin" in t or re.search(r"\brr\b", t):
+        add("Round Robin")
+    return found
+
+
+# One-line concept blurbs so the offline path can still answer "what is X" /
+# "difference between X and Y" questions when no model is installed.
+CONCEPTS = {
+    "FCFS": "First-Come First-Served runs processes in arrival order, non-preemptively. "
+    "Simple and fair by arrival, but a long early job delays everyone (convoy effect).",
+    "SJF Non-Preemptive": "Shortest Job First picks the shortest available burst each time "
+    "the CPU frees up and runs it to completion. Minimises average waiting time, but long "
+    "jobs can starve.",
+    "SJF Preemptive": "Shortest Remaining Time First preempts the running process whenever a "
+    "shorter job arrives. Best average waiting time, at the cost of more context switches and "
+    "possible starvation.",
+    "Round Robin": "Each process gets a fixed time quantum in turn, preempting when it expires. "
+    "Great responsiveness and fairness; performance depends on the quantum size.",
+    "Priority Non-Preemptive": "Runs the highest-priority ready process to completion. Important "
+    "work goes first, but low-priority jobs can starve (mitigated by aging).",
+    "Priority Preemptive": "Switches to a higher-priority process as soon as it arrives. "
+    "Responsive for important work; risks starving low-priority jobs.",
+}
+
+
+def _concept_md(algos):
+    """Markdown explanation for one or more named algorithms (offline concept Q&A)."""
+    return "\n\n".join(f"**{a}** — {CONCEPTS[a]}" for a in algos if a in CONCEPTS)
+
+
 def detect_quantum(text):
     m = re.search(r"(?:quantum|time\s*slice|\bq\b)\s*(?:=|:|of)?\s*(\d+)", text, re.I)
     return int(m.group(1)) if m else None
 
 
 def _wants_run(text):
-    return bool(re.search(r"\b(run|simulate|solve|compute|execute)\b", text, re.I))
+    # "compare" / "results" cover phrasings like "compare FCFS and SJF" and
+    # "provide the results" that mean "run it" but lack an explicit run verb.
+    return bool(re.search(r"\b(run|simulate|solve|compute|execute|compare|results?)\b", text, re.I))
 
 
 def _fallback_turn(user_text):
@@ -496,15 +748,26 @@ def _fallback_turn(user_text):
     if re.search(r"\b(show|list|display|current)\b", low) and not re.search(r"\d", low):
         return f"Current processes:\n\n{_processes_md(st.session_state.processes)}", "Here's the list."
 
-    parts = []
-    algorithm = detect_algorithm(t)
+    algos = detect_algorithms(t)
     quantum = detect_quantum(t)
     procs, skipped = extract_processes(t)
 
-    if algorithm:
-        st.session_state.sticky_cpu_algorithm = algorithm
-        st.session_state.last_algorithm = algorithm
-        parts.append(f"Algorithm set to **{algorithm}**.")
+    # Concept Q&A: algorithms named with nothing to run on (no new processes and
+    # none stored), or an explicit concept question — explain instead of acting.
+    is_concept_q = bool(
+        re.search(r"\b(what|which|explain|difference|differ|describe|how does)\b", low)
+    )
+    if algos and not procs and (is_concept_q or not st.session_state.processes):
+        return _concept_md(algos), "Here's a quick explanation."
+
+    parts = []
+    if algos:
+        st.session_state.sticky_cpu_algorithm = algos[0]
+        st.session_state.last_algorithm = algos[0]
+        if len(algos) == 1:
+            parts.append(f"Algorithm set to **{algos[0]}**.")
+        else:
+            parts.append("Algorithms set to **" + "**, **".join(algos) + "**.")
     if quantum is not None:
         st.session_state.chat_quantum = quantum
         parts.append(f"Quantum set to **{quantum}**.")
@@ -520,7 +783,10 @@ def _fallback_turn(user_text):
             "tell me e.g. `P2 burst 4`."
         )
     if _wants_run(t):
-        _run_and_report(parts)
+        if len(algos) >= 2:
+            _run_multi_and_report(parts, algos)
+        else:
+            _run_and_report(parts)
 
     if not parts:
         msg = (
