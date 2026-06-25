@@ -1,7 +1,7 @@
 # schemas.py
 
 from pydantic import BaseModel, field_validator
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 # ─────────────────────────────────────────
 # CU Sheduling — DISK SCHEDULING
@@ -86,8 +86,15 @@ class ScheduleResult(BaseModel):
 
 # --- Analyze ---
 
+class ScheduleMetrics(BaseModel):
+    """The comparison metrics returned for each algorithm by /schedule/analyze."""
+    avg_waiting_time: float
+    avg_turnaround_time: float
+    cpu_utilization: float
+
 class ScheduleAnalyzeResult(BaseModel):
-    results: dict   # keys: "fcfs", "sjf", "rr", "priority"
+    # keys: "fcfs", "sjf_np", "sjf_pre", "priority_np", "priority_pre", "round_robin"
+    results: Dict[str, ScheduleMetrics]
 
 # ─────────────────────────────────────────
 # MASS STORAGE — DISK SCHEDULING
@@ -153,7 +160,8 @@ class DiskResult(BaseModel):
 # --- Analyze ---
 
 class DiskAnalyzeResult(BaseModel):
-    results: dict       # keys: "fcfs", "sstf", "scan", "cscan", "look", "clook"
+    # keys: "fcfs", "sstf", "scan", "cscan", "look", "clook"
+    results: Dict[str, DiskResult]
 
 # ─────────────────────────────────────────
 # MEMORY MANAGEMENT — MVT
@@ -169,6 +177,28 @@ class MemoryRequest(BaseModel):
     total_memory: int
     fit_strategy: str = "first"   # first | best | worst
     processes: List[MemoryProcess]
+
+# --- Analyze ---
+
+class MemoryAnalyzeRequest(BaseModel):
+    """Input for /memory/analyze — compares fit strategies on one workload.
+
+    `compaction` selects the with- or without-compaction MVT variant; the fit
+    strategy is not specified here because all of first/best/worst are run.
+    """
+    total_memory: int
+    processes: List[MemoryProcess]
+    compaction: bool = False
+
+class MemoryMetrics(BaseModel):
+    """Per-fit-strategy comparison metrics returned by /memory/analyze."""
+    cpu_utilization: float
+    allocated_count: int
+    failed_count: int
+
+class MemoryAnalyzeResult(BaseModel):
+    # keys: "first", "best", "worst"
+    results: Dict[str, MemoryMetrics]
 
 # ─────────────────────────────────────────
 # VIRTUAL MEMORY — PAGE REPLACEMENT
@@ -192,3 +222,46 @@ class PageReplacementRequest(BaseModel):
         if len(value) == 0:
             raise ValueError("pages list cannot be empty")
         return value
+
+# --- Analyze ---
+
+class VMMetrics(BaseModel):
+    """Per-algorithm comparison metrics returned by /vm/analyze."""
+    page_fault_count: int
+    page_fault_rate: float
+
+class VMAnalyzeResult(BaseModel):
+    # keys: "fifo", "lru", "lru_approx", "optimal", "lfu", "mfu"
+    results: Dict[str, VMMetrics]
+
+# ─────────────────────────────────────────
+# ADVISOR — EXPLAIN & RECOMMEND (PRD Phase 2)
+# ─────────────────────────────────────────
+
+class PropertyFlag(BaseModel):
+    """A rule-detected property of the workload, with a human-readable detail."""
+    name: str
+    present: bool
+    detail: str
+
+class RankedAlgorithm(BaseModel):
+    """One algorithm's standing on the category's key comparison metric."""
+    algorithm: str
+    metric_name: str        # e.g. "avg_waiting_time" or "total_head_movement"
+    metric_value: float
+    rank: int               # 1 = best on the key metric
+
+class RecommendResult(BaseModel):
+    """
+    Structured output of /schedule/recommend and /disk/recommend.
+
+    detected_properties — transparent, rule-based analysis of the workload
+    ranking             — all algorithms ranked by the category's key metric
+    recommended         — the suggested algorithm
+    justification       — human-readable why, referencing detected properties
+    """
+    category: str           # "cpu_scheduling" or "disk_scheduling"
+    detected_properties: List[PropertyFlag]
+    ranking: List[RankedAlgorithm]
+    recommended: str
+    justification: str

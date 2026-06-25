@@ -1,6 +1,7 @@
 # main.py
 from fastapi import FastAPI
 from schemas import *
+import advisor
 
 # For CPU Scheduling
 from algorithms.cpu_scheduling.fcfs import fcfs
@@ -56,12 +57,12 @@ def schedule_np_sjf(request: ScheduleRequest):
     return sjf_non_preemptive(processes)
 
 @app.post("/schedule/priority_pre", response_model=ScheduleResult)
-def schedule_np_sjf(request: ScheduleRequest):
+def schedule_priority_pre(request: ScheduleRequest):
     processes = [details.model_dump() for details in request.processes]
     return priority_preemptive(processes)
 
 @app.post("/schedule/priority_np", response_model=ScheduleResult)
-def schedule_np_sjf(request: ScheduleRequest):
+def schedule_priority_np(request: ScheduleRequest):
     processes = [details.model_dump() for details in request.processes]
     return priority_non_preemptive(processes)
 
@@ -73,25 +74,14 @@ def schedule_round_robin(request: ScheduleRequest):
 @app.post("/schedule/analyze", response_model=ScheduleAnalyzeResult)
 def schedule_analyze(request: ScheduleRequest):
     """Runs all CPU scheduling algorithms on the same input for comparison."""
-    algorithms = {
-        "fcfs": fcfs,
-        "sjf_np": sjf_non_preemptive,
-        "sjf_pre": sjf_preemptive,
-        "priority_np": priority_non_preemptive,
-        "priority_pre": priority_preemptive,
-        "round_robin": round_robin,
-    }
-    results = {}
-    for name, algorithm in algorithms.items():
-        # Each algorithm may mutate its input, so hand it a fresh copy.
-        processes = [details.model_dump() for details in request.processes]
-        outcome = algorithm(processes)
-        results[name] = {
-            "avg_waiting_time": outcome["avg_waiting_time"],
-            "avg_turnaround_time": outcome["avg_turnaround_time"],
-            "cpu_utilization": outcome["cpu_utilization"],
-        }
-    return {"results": results}
+    processes = [details.model_dump() for details in request.processes]
+    return {"results": advisor.analyze_cpu(processes, request.quantum or 2)}
+
+@app.post("/schedule/recommend", response_model=RecommendResult)
+def schedule_recommend(request: ScheduleRequest):
+    """Detects workload properties and recommends a CPU scheduling algorithm."""
+    processes = [details.model_dump() for details in request.processes]
+    return advisor.recommend_cpu(processes, request.quantum or 2)
 
 # ─────────────────────────────────────────
 # MASS STORAGE — DISK SCHEDULING
@@ -154,21 +144,22 @@ def disk_clook(request: DiskRequest):
 @app.post("/disk/analyze", response_model=DiskAnalyzeResult)
 def disk_analyze(request: DiskRequest):
     """Runs all disk algorithms on the same input for comparison."""
-    kwargs = dict(
+    return {"results": advisor.analyze_disk(
+        head=request.head,
+        requests=request.requests,
+        direction=request.direction,
+        number_of_tracks=request.number_of_tracks,
+    )}
+
+@app.post("/disk/recommend", response_model=RecommendResult)
+def disk_recommend(request: DiskRequest):
+    """Detects request-pattern properties and recommends a disk scheduling algorithm."""
+    return advisor.recommend_disk(
         head=request.head,
         requests=request.requests,
         direction=request.direction,
         number_of_tracks=request.number_of_tracks,
     )
-    results = {
-        "fcfs": fcfs_disk(**kwargs),
-        "sstf": sstf_disk(**kwargs),
-        "scan": scan_disk(**kwargs),
-        "cscan": cscan_disk(**kwargs),
-        "look": look_disk(**kwargs),
-        "clook": clook_disk(**kwargs),
-    }
-    return {"results": results}
 
 # ─────────────────────────────────────────
 # MEMORY MANAGEMENT — MVT
@@ -181,6 +172,12 @@ def memory_mvt_with_compaction(request: MemoryRequest):
 @app.post("/memory/mvt_without_compaction")
 def memory_mvt_without_compaction(request: MemoryRequest):
     return mvt_without_compaction(request.model_dump())
+
+@app.post("/memory/analyze", response_model=MemoryAnalyzeResult)
+def memory_analyze(request: MemoryAnalyzeRequest):
+    """Compares First/Best/Worst fit on the same workload (compaction selectable)."""
+    processes = [p.model_dump() for p in request.processes]
+    return {"results": advisor.analyze_memory(request.total_memory, processes, request.compaction)}
 
 # ─────────────────────────────────────────
 # VIRTUAL MEMORY — PAGE REPLACEMENT
@@ -209,3 +206,8 @@ def vm_lfu(request: PageReplacementRequest):
 @app.post("/vm/mfu")
 def vm_mfu(request: PageReplacementRequest):
     return mfu_pra(request.model_dump())
+
+@app.post("/vm/analyze", response_model=VMAnalyzeResult)
+def vm_analyze(request: PageReplacementRequest):
+    """Runs all page-replacement algorithms on the same reference string."""
+    return {"results": advisor.analyze_vm(request.pages, request.frames)}
