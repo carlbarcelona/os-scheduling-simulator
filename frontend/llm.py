@@ -151,12 +151,64 @@ def get_llm(model_path: str):
     )
 
 
-def chat_json(messages, temperature: float = 0.1, max_tokens: int = 512) -> dict:
+def _extract_json_object(content: str) -> dict:
+    """Parse the first complete JSON object out of a model response.
+
+    Small models occasionally wrap the object in prose/code fences, or — when the
+    output is truncated at the token limit — leave it unterminated. A greedy
+    `\\{.*\\}` net mishandles both: it spans across stray braces and, on truncation,
+    raises a misleading secondary JSONDecodeError. Instead we scan for the first
+    `{` and walk forward tracking brace depth while respecting string literals and
+    `\\` escapes, returning the first balanced object. A trailing comma (common in
+    truncated/sloppy output) is stripped before parsing.
+
+    Raises ValueError if no balanced object is present.
+    """
+    start = content.find("{")
+    if start == -1:
+        raise ValueError(f"Model did not return JSON: {content[:200]!r}")
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for i in range(start, len(content)):
+        ch = content[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidate = content[start : i + 1]
+                # Strip a trailing comma before the closing brace, e.g. `,}` / `, }`.
+                candidate = re.sub(r",(\s*})", r"\1", candidate)
+                return json.loads(candidate)
+
+    raise ValueError(f"Model returned an unterminated JSON object: {content[:200]!r}")
+
+
+def chat_json(
+    messages,
+    temperature: float = 0.1,
+    max_tokens: int = 768,
+    schema: dict | None = None,
+) -> dict:
     """Run one chat completion constrained to a JSON object and return it parsed.
 
-    Uses llama.cpp's grammar-constrained `response_format={"type":"json_object"}`
-    so small models reliably emit valid JSON (the model is a parser, not a
-    solver — it only produces the input contract; the backend computes results).
+    Uses llama.cpp's grammar-constrained `response_format`. When `schema` is given,
+    the grammar is built from it (`LlamaGrammar.from_json_schema`) so output is
+    bounded to the exact action shape — preventing the rambling, truncated objects
+    that caused parse crashes. The model stays a parser, not a solver: it only
+    produces the input contract; the backend computes results.
 
     Raises RuntimeError if the runtime/model isn't available, or ValueError if
     the output can't be parsed — either way the caller falls back to the offline
@@ -169,17 +221,27 @@ def chat_json(messages, temperature: float = 0.1, max_tokens: int = 512) -> dict
         raise RuntimeError("llama-cpp-python is not installed.")
 
     llm = get_llm(path)
-    out = llm.create_chat_completion(
-        messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        response_format={"type": "json_object"},
-    )
-    content = out["choices"][0]["message"]["content"]
+
+    def _complete(response_format):
+        out = llm.create_chat_completion(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+        )
+        return out["choices"][0]["message"]["content"]
+
+    if schema is not None:
+        try:
+            content = _complete({"type": "json_object", "schema": schema})
+        except Exception:
+            # Grammar compilation can fail on unsupported schema constructs; fall
+            # back to plain JSON-object mode rather than hard-failing the chat.
+            content = _complete({"type": "json_object"})
+    else:
+        content = _complete({"type": "json_object"})
+
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", content, re.S)  # safety net
-        if m:
-            return json.loads(m.group(0))
-        raise ValueError(f"Model did not return JSON: {content[:200]!r}")
+        return _extract_json_object(content)  # tolerant of fences/truncation
