@@ -744,6 +744,17 @@ elif page == "Memory":
         help="Memory allocation strategy. First Fit, Best Fit, Worst Fit, or Next Fit."
     )
 
+    # KNOWN BACKEND GAP: mvt.py's find_fit() only branches on "best"/"worst" —
+    # "next" falls through to the same behavior as "first" (always searches
+    # from the start of the block list, never resumes from the last
+    # allocation point). Selecting Next Fit currently produces IDENTICAL
+    # results to First Fit, silently — no error, just a quietly wrong
+    # strategy. Flagged to whoever owns mvt.py; not something app.py can
+    # work around, since the backend never receives or could derive "where
+    # the last search left off" from a single stateless request anyway.
+    if fit_strategy == "next":
+        st.sidebar.caption("⚠️ Next Fit currently behaves identically to First Fit on the backend (not yet distinctly implemented).")
+
     # Per-algorithm process queue: switching fit strategy resets the process
     # list, same as the Scheduler page — old results no longer correspond to
     # the newly selected strategy.
@@ -826,16 +837,17 @@ elif page == "Memory":
     st.subheader(f"Strategy: {fit_strategy.capitalize()} Fit — {compaction}")
 
     if mem_run_clicked:
-        # NOTE: MVT endpoints not yet in config.py — pending Architect.
-        # Endpoint will be either /memory/mvt_with_compaction or /memory/mvt_without_compaction
         mem_payload = {
             "total_memory": int(total_memory),
             "fit_strategy": fit_strategy,
             "processes": st.session_state.memory_processes,
         }
 
-        # Placeholder endpoint — update when Architect adds to config.py
-        mem_endpoint = f"{API_BASE}/memory/mvt_with_compaction" if compaction == "With Compaction" else f"{API_BASE}/memory/mvt_without_compaction"
+        # Now using the real named constants from config.py (added by the
+        # architect) instead of hand-built f-strings — same endpoint paths,
+        # but a route rename now only needs a config.py change, not a hunt
+        # through app.py for hardcoded URLs.
+        mem_endpoint = MEMORY_MVT_WITH_COMPACTION_API if compaction == "With Compaction" else MEMORY_MVT_WITHOUT_COMPACTION_API
 
         with st.status("Running memory simulation...", expanded=True) as status:
             try:
@@ -863,7 +875,7 @@ elif page == "Memory":
 
             except requests.exceptions.ConnectionError:
                 status.update(label="Cannot connect to API.", state="error", expanded=False)
-                st.error("Cannot connect to the API. Is the backend running? (Memory endpoints pending from Backend Architect)")
+                st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.memory_response = None
 
     if st.session_state.memory_response is not None:
@@ -1119,15 +1131,15 @@ elif page == "Virtual Memory":
         key="vm_run_btn"
     )
 
-    # VM algorithm to endpoint mapping
-    # NOTE: VM endpoints not yet in config.py — pending Architect.
+    # VM algorithm to endpoint mapping — now using the real named constants
+    # from config.py (added by the architect) instead of hand-built f-strings.
     VM_ALGORITHM_MAP = {
-        "FIFO": f"{API_BASE}/vm/fifo",
-        "LRU": f"{API_BASE}/vm/lru",
-        "LRU Approximation": f"{API_BASE}/vm/lru_approx",
-        "Optimal": f"{API_BASE}/vm/optimal",
-        "LFU": f"{API_BASE}/vm/lfu",
-        "MFU": f"{API_BASE}/vm/mfu",
+        "FIFO": VM_FIFO_API,
+        "LRU": VM_LRU_API,
+        "LRU Approximation": VM_LRU_APPROX_API,
+        "Optimal": VM_OPTIMAL_API,
+        "LFU": VM_LFU_API,
+        "MFU": VM_MFU_API,
     }
 
     # Main area
@@ -1169,7 +1181,7 @@ elif page == "Virtual Memory":
 
             except requests.exceptions.ConnectionError:
                 status.update(label="Cannot connect to API.", state="error", expanded=False)
-                st.error("Cannot connect to the API. Is the backend running? (Virtual Memory endpoints pending from Backend Architect)")
+                st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.vm_response = None
 
     if st.session_state.vm_response is not None:
@@ -1195,38 +1207,110 @@ elif page == "Virtual Memory":
 
             st.divider()
 
-            # Page fault visualization — Plotly bar chart
+            # Page fault visualization — textbook-style stacked frame columns
+            # (matches the standard OS textbook diagram: one column per
+            # reference, each column shows the full set of pages currently
+            # resident in memory at that step, color-coded red on a fault).
+            #
+            # IMPORTANT DESIGN NOTE: frames_state's list order does NOT
+            # reliably convey recency/age — FIFO (and others) replace a
+            # victim IN PLACE at its old list index, so position-in-list is
+            # an implementation artifact, not a meaningful "how old is this
+            # page" signal. Sorting numerically per column gives a stable,
+            # honest layout instead of implying an age story the data
+            # doesn't actually support.
+            #
+            # For LFU / MFU / LRU Approximation, the backend's "frequencies"
+            # field carries real diagnostic value (true use-counts for LFU/
+            # MFU, reference bits — 0 or 1 — for LRU Approximation's
+            # second-chance algorithm) and is folded into the hover text
+            # when present. FIFO/LRU/Optimal always send frequencies=None,
+            # so they just show the page number with no extra annotation.
             st.subheader("Page Fault Timeline")
             timeline = vm_result.get("timeline", [])
             if timeline:
                 import plotly.graph_objects as go
-                pages_seq = [str(t["page"]) for t in timeline]
-                faults = [1 if t["fault"] else 0 for t in timeline]
-                colors = ["#ef4444" if f else "#00ff9d" for f in faults]
+
+                num_frames = vm_result.get("frames", max((len(t.get("frames_state", [])) for t in timeline), default=1))
+                fault_color = "#ef4444"
+                hit_color = "#00ff9d"
+                empty_color = "#2a2d3e"
 
                 fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=list(range(len(pages_seq))),
-                    y=[1] * len(pages_seq),
-                    marker_color=colors,
-                    text=pages_seq,
-                    textposition="inside",
-                    hovertext=[f"Page {p}: {'FAULT' if f else 'HIT'}" for p, f in zip(pages_seq, faults)],
-                    hoverinfo="text",
-                ))
+                # One trace PER ROW (frame slot), built column by column, so
+                # each column's frame contents stack from row 0 (bottom) to
+                # row num_frames-1 (top) — matching the textbook's vertical
+                # frame-box layout.
+                row_traces = [{"x": [], "y": [], "base": [], "text": [], "color": [], "customdata": []} for _ in range(num_frames)]
+
+                for ref_idx, t in enumerate(timeline):
+                    page = t.get("page")
+                    fault = t.get("fault", False)
+                    frames_state = sorted(t.get("frames_state", []) or [])
+                    freqs = t.get("frequencies")
+                    label = str(ref_idx + 1)
+                    bar_color = fault_color if fault else hit_color
+
+                    for row in range(num_frames):
+                        trace = row_traces[row]
+                        trace["x"].append(label)
+                        trace["base"].append(row)
+                        trace["y"].append(1)
+                        if row < len(frames_state):
+                            p = frames_state[row]
+                            # NOTE: after a real HTTP round-trip, JSON object
+                            # keys are always strings — frequencies (a dict)
+                            # will have string keys ("7") even though
+                            # frames_state (a plain list) keeps its int
+                            # values (7). A direct `p in freqs` lookup with
+                            # an int p against string keys silently fails
+                            # every time, dropping all hover annotations with
+                            # no error. Look up by str(p) instead.
+                            freq_val = freqs.get(str(p)) if freqs is not None else None
+                            if freq_val is not None:
+                                hover = f"Page {p} (ref bit/freq: {freq_val})"
+                            else:
+                                hover = f"Page {p}"
+                            trace["text"].append(str(p))
+                            trace["color"].append(bar_color)
+                            trace["customdata"].append(hover)
+                        else:
+                            # Frame slot not yet filled (early references before
+                            # all frames are occupied for the first time).
+                            trace["text"].append("")
+                            trace["color"].append(empty_color)
+                            trace["customdata"].append("empty")
+
+                for row in range(num_frames):
+                    trace = row_traces[row]
+                    fig.add_trace(go.Bar(
+                        x=trace["x"],
+                        y=trace["y"],
+                        base=trace["base"],
+                        text=trace["text"],
+                        textposition="inside",
+                        marker_color=trace["color"],
+                        marker_line=dict(color="#0f1117", width=1),
+                        customdata=trace["customdata"],
+                        hovertemplate="%{customdata}<extra></extra>",
+                        insidetextanchor="middle",
+                        showlegend=False,
+                    ))
+
                 fig.update_layout(
+                    barmode="stack",
                     xaxis_title="Reference",
-                    yaxis=dict(visible=False),
+                    yaxis=dict(visible=False, range=[0, num_frames]),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#e2e8f0"),
                     xaxis=dict(gridcolor="#2a2d3e"),
                     showlegend=False,
                     margin=dict(l=20, r=20, t=20, b=40),
-                    height=120,
+                    height=max(180, 60 * num_frames),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                st.caption("🔴 Red = Page Fault  |  🟢 Green = Page Hit")
+                st.caption("🔴 Red column = Page Fault  |  🟢 Green column = Page Hit  |  Rows sorted numerically — list position in the raw data doesn't represent recency/age.")
 
         with tab_timeline:
             timeline = vm_result.get("timeline", [])
@@ -1285,9 +1369,8 @@ elif page == "Compare":
             if not has_priority_data:
                 st.warning(
                     "Your process list doesn't have priority values yet, so Priority algorithms "
-                    "will run with every process treated as equal priority (priority 0). "
-                    "To give Priority algorithms meaningful results, add processes with priority "
-                    "on the Scheduler page first."
+                    "will be excluded from this comparison (Round Robin and the rest will still run). "
+                    "To include Priority algorithms, add processes with priority on the Scheduler page first."
                 )
         else:
             st.info("No processes added yet. Go to the Scheduler page to add processes first.")
