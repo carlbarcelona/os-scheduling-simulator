@@ -52,6 +52,12 @@ if "disk_response" not in st.session_state:
 if "disk_compare_results" not in st.session_state:
     st.session_state.disk_compare_results = None
 
+if "memory_compare_results" not in st.session_state:
+    st.session_state.memory_compare_results = None
+
+if "vm_compare_results" not in st.session_state:
+    st.session_state.vm_compare_results = None
+
 if "memory_response" not in st.session_state:
     st.session_state.memory_response = None
 
@@ -101,6 +107,20 @@ if "sticky_vm_algorithm" not in st.session_state:
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
+
+# Top-level input mode: the conversational Chatbot vs the manual form-driven
+# pages. The chatbot stays a self-contained module — this only mounts it; all
+# chat/LLM logic lives in chatbot.py / llm.py.
+mode = st.sidebar.segmented_control(
+    "Mode", ["Manual", "Chatbot"], default="Manual", label_visibility="collapsed"
+)
+st.sidebar.divider()
+
+if mode == "Chatbot":
+    from chatbot import render_chatbot  # lazy: only load the bot/llm when used
+    render_chatbot()
+    st.stop()  # halt here so the manual pages below don't render in chat mode
+
 page = st.sidebar.radio(
     "Navigate",
     ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare", "Recommend"],
@@ -363,7 +383,19 @@ if page == "Scheduler":
 
         with tab_gantt:
             from components.gantt import render_gantt
-            st.plotly_chart(render_gantt(result["timeline"], result["schedule"]), use_container_width=True)
+            gantt_layout = st.segmented_control(
+                "Layout",
+                ["Single lane", "Per process"],
+                default="Single lane",
+                key="cpu_gantt_layout",
+                label_visibility="collapsed",
+                help="Single lane = classic CPU timeline; Per process = one row per process.",
+            )
+            layout_arg = "per_process" if gantt_layout == "Per process" else "single"
+            st.plotly_chart(
+                render_gantt(result["timeline"], result["schedule"], layout=layout_arg),
+                use_container_width=True,
+            )
 
         with tab_raw:
             st.json(result)
@@ -1332,7 +1364,7 @@ elif page == "Compare":
 
     section = st.radio(
         "Compare Type",
-        ["CPU Scheduling", "Disk Scheduling"],
+        ["CPU Scheduling", "Disk Scheduling", "Memory Management", "Virtual Memory"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -1587,6 +1619,538 @@ elif page == "Compare":
 
         else:
             st.info("Run a comparison above to see disk scheduling results here.")
+
+    elif section == "Memory Management":
+        st.subheader("Memory Management — Fit Strategy Comparison")
+        st.caption(
+            "Runs all fit strategies (First, Best, Worst, Next) on the same process list and memory size. "
+            "Key metrics: CPU utilization, allocated count, and failed allocations."
+        )
+
+        st.divider()
+
+        # ── Source parameters ──────────────────────────────────────────────
+        # Pull whatever the user last configured on the Memory page so they
+        # don't have to re-enter anything here — same pattern as Disk.
+        has_memory_processes = len(st.session_state.memory_processes) > 0
+
+        if has_memory_processes:
+            st.markdown("**Parameters from Memory page:**")
+            st.text(f"Total Memory: {st.session_state.get('total_memory_input', 1024)} K")
+            st.text(f"Compaction: {st.session_state.sticky_compaction}")
+            st.text(f"Processes: {len(st.session_state.memory_processes)}")
+            for p in st.session_state.memory_processes:
+                st.text(f"  {p['pid']}  |  Size: {p['size']}K  |  Burst: {p['burst_time']}")
+
+            # Allow toggling compaction for this comparison without going back
+            mem_cmp_compaction = st.selectbox(
+                "Compaction mode for comparison",
+                ["With Compaction", "Without Compaction"],
+                index=["With Compaction", "Without Compaction"].index(st.session_state.sticky_compaction),
+                key="mem_cmp_compaction_select",
+            )
+        else:
+            st.info("No processes added yet. Go to the Memory page to add processes and set parameters first.")
+            mem_cmp_compaction = "With Compaction"
+
+        st.divider()
+
+        if st.button(
+            "▶ Run Memory Compare",
+            type="primary",
+            disabled=not has_memory_processes,
+            key="mem_compare_btn",
+        ):
+            fit_strategies = ["first", "best", "worst", "next"]
+            mem_endpoint = (
+                MEMORY_MVT_WITH_COMPACTION_API
+                if mem_cmp_compaction == "With Compaction"
+                else MEMORY_MVT_WITHOUT_COMPACTION_API
+            )
+            total_mem_val = int(st.session_state.get("total_memory_input", 1024))
+
+            mem_cmp_collected = {}
+
+            with st.status("Running memory strategy comparison...", expanded=True) as status:
+                try:
+                    for strat in fit_strategies:
+                        st.write(f"Running {strat.capitalize()} Fit…")
+                        payload = {
+                            "total_memory": total_mem_val,
+                            "fit_strategy": strat,
+                            "processes": st.session_state.memory_processes,
+                        }
+                        r = requests.post(mem_endpoint, json=payload, timeout=10)
+                        r.raise_for_status()
+                        mem_cmp_collected[strat] = r.json()
+
+                    st.session_state.memory_compare_results = {
+                        "results": mem_cmp_collected,
+                        "compaction": mem_cmp_compaction,
+                        "total_memory": total_mem_val,
+                    }
+                    status.update(label="Memory comparison complete!", state="complete", expanded=False)
+                    st.toast("Memory comparison complete!", icon="✅")
+
+                except requests.exceptions.Timeout:
+                    status.update(label="Request timed out.", state="error", expanded=False)
+                    st.error("Request timed out. Is the backend running?")
+                    st.session_state.memory_compare_results = None
+
+                except requests.exceptions.HTTPError as e:
+                    try:
+                        detail = e.response.json().get("detail", str(e))
+                    except Exception:
+                        detail = str(e)
+                    status.update(label="API error.", state="error", expanded=False)
+                    st.error(f"API error: {detail}")
+                    st.session_state.memory_compare_results = None
+
+                except requests.exceptions.ConnectionError:
+                    status.update(label="Cannot connect to API.", state="error", expanded=False)
+                    st.error("Cannot connect to the API. Is the backend running?")
+                    st.session_state.memory_compare_results = None
+
+        if st.session_state.memory_compare_results is not None:
+            import plotly.graph_objects as go
+
+            mem_res = st.session_state.memory_compare_results["results"]
+            strat_names = [s.capitalize() + " Fit" for s in mem_res.keys()]
+            strat_keys = list(mem_res.keys())
+            total_mem_val = st.session_state.memory_compare_results["total_memory"]
+
+            cpu_utils   = [mem_res[s].get("cpu_utilization", 0) for s in strat_keys]
+            alloc_counts = [len(mem_res[s].get("allocated", [])) for s in strat_keys]
+            fail_counts  = [len(mem_res[s].get("failed", [])) for s in strat_keys]
+
+            tab_chart, tab_memmap, tab_table, tab_raw = st.tabs(
+                ["Chart", "Memory Maps", "Table", "Raw Response"]
+            )
+
+            with tab_chart:
+                st.subheader("Fit Strategy Comparison")
+
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    name="CPU Utilization (%)",
+                    x=strat_names,
+                    y=cpu_utils,
+                    marker_color="#00ff9d",
+                    text=[f"{v:.1f}%" for v in cpu_utils],
+                    textposition="outside",
+                ))
+                fig.add_trace(go.Bar(
+                    name="Allocated Processes",
+                    x=strat_names,
+                    y=alloc_counts,
+                    marker_color="#3b82f6",
+                    text=alloc_counts,
+                    textposition="outside",
+                ))
+                fig.add_trace(go.Bar(
+                    name="Failed Allocations",
+                    x=strat_names,
+                    y=fail_counts,
+                    marker_color="#ef4444",
+                    text=fail_counts,
+                    textposition="outside",
+                ))
+                fig.update_layout(
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e", title="Value"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab_memmap:
+                st.subheader("Memory Map per Strategy")
+                st.caption(
+                    "Each sub-chart shows the final memory layout for that fit strategy. "
+                    "Blocks stack from address 0 (bottom). Each column = one timeline snapshot."
+                )
+
+                # Palette shared across all sub-charts for consistent PID colors
+                palette = [
+                    "#00ff9d", "#3b82f6", "#f59e0b", "#ef4444",
+                    "#a855f7", "#06b6d4", "#f97316", "#84cc16",
+                ]
+                all_pids_global = set()
+                for strat_data in mem_res.values():
+                    for entry in strat_data.get("timeline", []):
+                        for block in entry.get("memory_map", []):
+                            if not block.get("free", True):
+                                all_pids_global.add(block["pid"])
+                pid_colors = {
+                    pid: palette[i % len(palette)]
+                    for i, pid in enumerate(sorted(all_pids_global))
+                }
+
+                for strat_key, strat_label in zip(strat_keys, strat_names):
+                    st.markdown(f"**{strat_label}**")
+                    strat_data = mem_res[strat_key]
+                    timeline = strat_data.get("timeline", [])
+
+                    if not timeline:
+                        st.info(f"No memory map data for {strat_label}.")
+                        continue
+
+                    traces = {}
+                    for snap_idx, entry in enumerate(timeline):
+                        memory_map = entry.get("memory_map", [])
+                        event = entry.get("event", "")
+                        pid = entry.get("pid")
+
+                        if event in ("allocated", "retry_allocated") and pid:
+                            size = entry.get("size")
+                            prefix = "Retry" if event == "retry_allocated" else "Alloc"
+                            event_label = f"{prefix} {pid} ({size}K)" if size else f"{prefix} {pid}"
+                        elif event == "allocation_failed" and pid:
+                            event_label = f"Failed: {pid}"
+                        elif event == "removed" and pid:
+                            event_label = f"Removed {pid}"
+                        elif event == "compacted":
+                            event_label = "Compacted"
+                        elif event == "completed":
+                            event_label = "Completed"
+                        else:
+                            event_label = event or "—"
+
+                        label = f"{snap_idx + 1}: {event_label}"
+
+                        for block in memory_map:
+                            pid_key = "FREE" if block.get("free", True) else block["pid"]
+                            size = block["end"] - block["start"]
+                            base = block["start"]
+                            if pid_key not in traces:
+                                traces[pid_key] = {
+                                    "x": [], "y": [], "base": [], "text": [],
+                                    "color": "#2a2d3e" if pid_key == "FREE" else pid_colors.get(pid_key, "#888"),
+                                }
+                            traces[pid_key]["x"].append(label)
+                            traces[pid_key]["y"].append(size)
+                            traces[pid_key]["base"].append(base)
+                            traces[pid_key]["text"].append(f"{pid_key}<br>{base}–{block['end']}")
+
+                    fig_mm = go.Figure()
+                    if "FREE" in traces:
+                        t = traces["FREE"]
+                        fig_mm.add_trace(go.Bar(
+                            name="FREE", x=t["x"], y=t["y"], base=t["base"],
+                            text=t["text"], textposition="inside",
+                            marker_color=t["color"], marker_line=dict(color="#0f1117", width=1),
+                            hoverinfo="text", insidetextanchor="middle",
+                        ))
+                    for pid_key, t in traces.items():
+                        if pid_key == "FREE":
+                            continue
+                        fig_mm.add_trace(go.Bar(
+                            name=pid_key, x=t["x"], y=t["y"], base=t["base"],
+                            text=t["text"], textposition="inside",
+                            marker_color=t["color"], marker_line=dict(color="#0f1117", width=1),
+                            hoverinfo="text", insidetextanchor="middle",
+                        ))
+
+                    fig_mm.update_layout(
+                        barmode="overlay",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#e2e8f0"),
+                        xaxis=dict(title="Snapshot (Event)", gridcolor="#2a2d3e", tickangle=-30),
+                        yaxis=dict(title="Memory Address (K)", gridcolor="#2a2d3e", range=[0, total_mem_val]),
+                        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                        margin=dict(l=40, r=20, t=10, b=60),
+                        height=420,
+                    )
+                    st.plotly_chart(fig_mm, use_container_width=True)
+
+            with tab_table:
+                table_data = []
+                for strat_key, strat_label in zip(strat_keys, strat_names):
+                    d = mem_res[strat_key]
+                    table_data.append({
+                        "Strategy": strat_label,
+                        "CPU Utilization (%)": round(d.get("cpu_utilization", 0), 2),
+                        "Allocated": len(d.get("allocated", [])),
+                        "Failed": len(d.get("failed", [])),
+                        "Compaction Performed": "Yes" if d.get("compaction_performed") else "No",
+                        "Avg Burst Time": round(d.get("avg_burst_time", 0), 2),
+                    })
+                st.dataframe(table_data, use_container_width=True, hide_index=True)
+
+            with tab_raw:
+                st.json(mem_res)
+
+        else:
+            st.info("Run a comparison above to see memory management results here.")
+
+    elif section == "Virtual Memory":
+        st.subheader("Virtual Memory — Page Replacement Algorithm Comparison")
+        st.caption(
+            "Runs all page replacement algorithms (FIFO, LRU, LRU Approximation, Optimal, LFU, MFU) "
+            "on the same page reference string. Key metric: page fault count and rate."
+        )
+
+        st.divider()
+
+        # ── Source parameters ──────────────────────────────────────────────
+        # Reuse whatever was typed on the Virtual Memory page (vm_pages_input
+        # and vm_frames_input). Those widget keys vanish when the user navigates
+        # away, so we mirror them into always-alive session_state entries below.
+        # Initialise mirrors if they haven't been set yet.
+        if "vm_compare_pages_input" not in st.session_state:
+            st.session_state.vm_compare_pages_input = ""
+        if "vm_compare_frames" not in st.session_state:
+            st.session_state.vm_compare_frames = 3
+
+        # Try to prefill from the Virtual Memory page's last known values
+        # (vm_pages_input key may still exist from this run if user just came from there).
+        prefill_pages = st.session_state.get("vm_pages_input", st.session_state.vm_compare_pages_input)
+        prefill_frames = int(st.session_state.get("vm_frames_input", st.session_state.vm_compare_frames))
+
+        st.markdown("**Page Replacement Parameters**")
+        st.caption("These default to whatever was entered on the Virtual Memory page, but can be changed here.")
+
+        cmp_vm_pages_raw = st.text_input(
+            "Page Reference String",
+            value=prefill_pages,
+            placeholder="e.g. 7, 0, 1, 2, 0, 3, 4, 2, 3, 0, 3, 2",
+            key="vm_cmp_pages_input",
+        )
+        cmp_vm_frames = st.number_input(
+            "Number of Frames",
+            min_value=1, step=1, value=prefill_frames,
+            key="vm_cmp_frames_input",
+        )
+
+        # Persist for next visit
+        st.session_state.vm_compare_pages_input = cmp_vm_pages_raw
+        st.session_state.vm_compare_frames = int(cmp_vm_frames)
+
+        try:
+            cmp_vm_pages_list = [int(p.strip()) for p in cmp_vm_pages_raw.split(",") if p.strip()]
+        except ValueError:
+            st.error("Invalid input — enter comma-separated integers only.")
+            cmp_vm_pages_list = []
+
+        if cmp_vm_pages_list:
+            st.caption(f"Reference string length: {len(cmp_vm_pages_list)} · Frames: {int(cmp_vm_frames)}")
+
+        st.divider()
+
+        vm_compare_disabled = len(cmp_vm_pages_list) == 0
+
+        if st.button(
+            "▶ Run VM Compare",
+            type="primary",
+            disabled=vm_compare_disabled,
+            key="vm_compare_btn",
+        ):
+            VM_CMP_ALGORITHM_MAP = {
+                "FIFO": VM_FIFO_API,
+                "LRU": VM_LRU_API,
+                "LRU Approximation": VM_LRU_APPROX_API,
+                "Optimal": VM_OPTIMAL_API,
+                "LFU": VM_LFU_API,
+                "MFU": VM_MFU_API,
+            }
+
+            vm_cmp_payload = {
+                "pages": cmp_vm_pages_list,
+                "frames": int(cmp_vm_frames),
+            }
+
+            vm_cmp_collected = {}
+
+            with st.status("Running VM algorithm comparison...", expanded=True) as status:
+                try:
+                    for algo_name, endpoint in VM_CMP_ALGORITHM_MAP.items():
+                        st.write(f"Running {algo_name}…")
+                        r = requests.post(endpoint, json=vm_cmp_payload, timeout=10)
+                        r.raise_for_status()
+                        vm_cmp_collected[algo_name] = r.json()
+
+                    st.session_state.vm_compare_results = {
+                        "results": vm_cmp_collected,
+                        "pages": cmp_vm_pages_list,
+                        "frames": int(cmp_vm_frames),
+                    }
+                    status.update(label="VM comparison complete!", state="complete", expanded=False)
+                    st.toast("VM comparison complete!", icon="✅")
+
+                except requests.exceptions.Timeout:
+                    status.update(label="Request timed out.", state="error", expanded=False)
+                    st.error("Request timed out. Is the backend running?")
+                    st.session_state.vm_compare_results = None
+
+                except requests.exceptions.HTTPError as e:
+                    try:
+                        detail = e.response.json().get("detail", str(e))
+                    except Exception:
+                        detail = str(e)
+                    status.update(label="API error.", state="error", expanded=False)
+                    st.error(f"API error: {detail}")
+                    st.session_state.vm_compare_results = None
+
+                except requests.exceptions.ConnectionError:
+                    status.update(label="Cannot connect to API.", state="error", expanded=False)
+                    st.error("Cannot connect to the API. Is the backend running?")
+                    st.session_state.vm_compare_results = None
+
+        if st.session_state.vm_compare_results is not None:
+            import plotly.graph_objects as go
+
+            vm_res = st.session_state.vm_compare_results["results"]
+            vm_algo_names = list(vm_res.keys())
+            fault_counts = [vm_res[a].get("page_fault_count", 0) for a in vm_algo_names]
+            fault_rates  = [round(vm_res[a].get("page_fault_rate", 0), 4) for a in vm_algo_names]
+            num_frames   = st.session_state.vm_compare_results["frames"]
+
+            tab_chart, tab_timelines, tab_table, tab_raw = st.tabs(
+                ["Chart", "Page Fault Timelines", "Table", "Raw Response"]
+            )
+
+            with tab_chart:
+                st.subheader("Page Fault Count Comparison")
+                st.caption("Lower page faults = more efficient algorithm for this reference string.")
+
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    name="Page Fault Count",
+                    x=vm_algo_names,
+                    y=fault_counts,
+                    marker_color="#ef4444",
+                    text=fault_counts,
+                    textposition="outside",
+                ))
+                fig.add_trace(go.Bar(
+                    name="Page Fault Rate",
+                    x=vm_algo_names,
+                    y=fault_rates,
+                    marker_color="#f59e0b",
+                    text=[f"{v:.3f}" for v in fault_rates],
+                    textposition="outside",
+                ))
+                fig.update_layout(
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e", title="Value"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab_timelines:
+                st.subheader("Page Fault Timeline per Algorithm")
+                st.caption(
+                    "Each sub-chart mirrors the visualization from the Virtual Memory page. "
+                    "🔴 Red = Page Fault  |  🟢 Green = Page Hit. "
+                    "Rows sorted numerically — list position doesn't represent recency/age."
+                )
+
+                fault_color = "#ef4444"
+                hit_color   = "#00ff9d"
+                empty_color = "#2a2d3e"
+
+                for algo_name in vm_algo_names:
+                    st.markdown(f"**{algo_name}**")
+                    algo_data = vm_res[algo_name]
+                    timeline  = algo_data.get("timeline", [])
+
+                    if not timeline:
+                        st.info(f"No timeline data for {algo_name}.")
+                        continue
+
+                    num_frames_algo = algo_data.get(
+                        "frames",
+                        max((len(t.get("frames_state", [])) for t in timeline), default=1),
+                    )
+
+                    row_traces = [
+                        {"x": [], "y": [], "base": [], "text": [], "color": [], "customdata": []}
+                        for _ in range(num_frames_algo)
+                    ]
+
+                    for ref_idx, t in enumerate(timeline):
+                        page        = t.get("page")
+                        fault       = t.get("fault", False)
+                        frames_state = sorted(t.get("frames_state", []) or [])
+                        freqs        = t.get("frequencies")
+                        label        = str(ref_idx + 1)
+                        bar_color    = fault_color if fault else hit_color
+
+                        for row in range(num_frames_algo):
+                            trace = row_traces[row]
+                            trace["x"].append(label)
+                            trace["base"].append(row)
+                            trace["y"].append(1)
+                            if row < len(frames_state):
+                                p = frames_state[row]
+                                freq_val = freqs.get(str(p)) if freqs is not None else None
+                                hover = f"Page {p} (ref bit/freq: {freq_val})" if freq_val is not None else f"Page {p}"
+                                trace["text"].append(str(p))
+                                trace["color"].append(bar_color)
+                                trace["customdata"].append(hover)
+                            else:
+                                trace["text"].append("")
+                                trace["color"].append(empty_color)
+                                trace["customdata"].append("empty")
+
+                    fig_tl = go.Figure()
+                    for row in range(num_frames_algo):
+                        trace = row_traces[row]
+                        fig_tl.add_trace(go.Bar(
+                            x=trace["x"], y=trace["y"], base=trace["base"],
+                            text=trace["text"], textposition="inside",
+                            marker_color=trace["color"], marker_line=dict(color="#0f1117", width=1),
+                            customdata=trace["customdata"],
+                            hovertemplate="%{customdata}<extra></extra>",
+                            insidetextanchor="middle",
+                            showlegend=False,
+                        ))
+
+                    fig_tl.update_layout(
+                        barmode="stack",
+                        xaxis_title="Reference",
+                        yaxis=dict(visible=False, range=[0, num_frames_algo]),
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(color="#e2e8f0"),
+                        xaxis=dict(gridcolor="#2a2d3e"),
+                        showlegend=False,
+                        margin=dict(l=20, r=20, t=10, b=40),
+                        height=max(160, 60 * num_frames_algo),
+                    )
+                    st.plotly_chart(fig_tl, use_container_width=True)
+
+                    # Fault count badge beneath each sub-chart
+                    faults = algo_data.get("page_fault_count", 0)
+                    rate   = algo_data.get("page_fault_rate", 0)
+                    st.caption(f"Page Faults: **{faults}** · Fault Rate: **{rate:.4f}**")
+
+            with tab_table:
+                vm_table_data = []
+                for a in vm_algo_names:
+                    vm_table_data.append({
+                        "Algorithm": a,
+                        "Page Fault Count": vm_res[a].get("page_fault_count", 0),
+                        "Page Fault Rate": round(vm_res[a].get("page_fault_rate", 0), 4),
+                    })
+                vm_table_data.sort(key=lambda x: x["Page Fault Count"])
+                st.dataframe(vm_table_data, use_container_width=True, hide_index=True)
+
+            with tab_raw:
+                st.json(vm_res)
+
+        else:
+            st.info("Run a comparison above to see virtual memory results here.")
 
 # -------------------------------------------------------------
 # PAGE: RECOMMEND
