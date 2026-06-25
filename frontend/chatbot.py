@@ -880,14 +880,12 @@ def render_chatbot():
     with top_l:
         # Compact model chip; the full path is concealed and revealed on hover
         # (native browser title tooltip) so it isn't a distracting top banner.
-        chip = ""
         if use_llm:
             path = html.escape(status.get("model_path") or "")
-            chip = f"<span title=\"{path}\">🟢 Phi-3</span>  ·  "
-        st.markdown(
-            chip + f"**Processes:** `{len(st.session_state.processes)}`",
-            unsafe_allow_html=True,
-        )
+            st.markdown(
+                f"<span title=\"{path}\">🟢 Phi-3</span>",
+                unsafe_allow_html=True,
+            )
     with top_r:
         if st.button("🗑️ Clear chat", use_container_width=True):
             st.session_state.chat_history = [{"role": "assistant", "content": WELCOME, "llm": WELCOME}]
