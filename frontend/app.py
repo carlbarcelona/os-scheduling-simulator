@@ -526,35 +526,108 @@ elif page == "Mass Storage":
             # Seek pattern visualization — Plotly line chart
             # Matches OS textbook standard: cylinder position on X-axis,
             # time/step on Y-axis going downward (top = step 0, bottom = last step)
-            # The backend marks the C-SCAN / C-LOOK boundary jump explicitly as "?"
-            # inside the sequence array — we detect that literal marker (not inferred
-            # from distance) and render the jump segment as dashed, matching the
-            # textbook diagram convention. Numeric segments stay solid.
+            #
+            # Two INDEPENDENT display rules (confirmed against the OS textbook
+            # diagram, not inferred from numbers alone — these are properties of
+            # the ALGORITHM, not something derivable from the sequence values):
+            #   1. "?" LABELING — only algorithms that physically sweep all the
+            #      way to a disk boundary (SCAN, C-SCAN) show that boundary point
+            #      labeled "?" instead of its real track number. LOOK/C-LOOK
+            #      never touch the physical edge (they reverse/jump at the
+            #      farthest REQUEST), so this never applies to them.
+            #   2. DASHING — reserved specifically for the "C" algorithms'
+            #      wraparound jump (C-SCAN, C-LOOK), where the head leaves one
+            #      end of the disk and reappears elsewhere without passing
+            #      through the space between. A plain reversal-in-place (SCAN,
+            #      LOOK changing direction) is continuous physical movement and
+            #      stays solid even though nothing is serviced exactly at the
+            #      turn point.
+            # These two rules are independent — SCAN gets "?" but never dashes;
+            # C-LOOK dashes but never shows "?" (it has no edge visit at all).
             st.subheader("Seek Pattern")
             sequence = disk_result.get("sequence", [])
             if sequence:
                 import plotly.graph_objects as go
 
-                # Find index of the literal "?" marker, if present
-                marker_idx = None
-                for i, val in enumerate(sequence):
-                    if val == "?":
-                        marker_idx = i
+                EDGE_TOUCHING_ALGOS = {"SCAN", "C-SCAN"}
+                JUMP_ALGOS = {"C-SCAN", "C-LOOK"}
+                touches_edge = disk_algorithm in EDGE_TOUCHING_ALGOS
+                is_jump_algo = disk_algorithm in JUMP_ALGOS
+
+                # Backward-compat: the current real backend still emits literal
+                # "?" strings in sequence for C-SCAN (a known bug — see disk
+                # algorithm notes). Resolve those to real numeric positions
+                # first, so the rest of this logic only ever deals with
+                # numbers — "?" becomes purely a DISPLAY LABEL we compute
+                # ourselves below, never a value baked into the data.
+                max_track = number_of_tracks - 1
+                # Resolve "?" runs POSITIONALLY, not independently per-index —
+                # a run of consecutive "?" (C-SCAN emits exactly two) means:
+                # the FIRST one in the run = the edge being approached, the
+                # LAST one = the edge being departed from after the wrap.
+                # Resolving each "?" independently from its immediate neighbors
+                # breaks when a neighbor is ALSO still "?" (unresolved) at the
+                # time you look at it — both placeholders in a 2-long run would
+                # otherwise see the same surrounding real values and resolve
+                # identically, which is wrong.
+                numeric_sequence = list(sequence)
+                i = 0
+                while i < len(numeric_sequence):
+                    if numeric_sequence[i] == "?":
+                        run_start = i
+                        while i < len(numeric_sequence) and numeric_sequence[i] == "?":
+                            i += 1
+                        run_end = i  # exclusive
+                        prev_real = numeric_sequence[run_start - 1] if run_start > 0 else 0
+                        next_real = numeric_sequence[run_end] if run_end < len(numeric_sequence) else max_track
+                        entry_edge = max_track if prev_real >= (max_track / 2) else 0
+                        exit_edge = max_track if next_real >= (max_track / 2) else 0
+                        for j in range(run_start, run_end):
+                            numeric_sequence[j] = entry_edge if j == run_start else exit_edge
+                    else:
+                        i += 1
+
+                # Find the single reversal point: first index where the sweep
+                # direction flips. C-SCAN/C-LOOK have exactly one (the jump);
+                # SCAN/LOOK have exactly one too (the in-place turn); FCFS/SSTF
+                # may have none, or several (they're not monotonic sweeps at
+                # all) — in that case there's nothing to dash or label anyway.
+                direction_param = disk_result.get("direction", "right")
+                reversal_idx = None
+                for i in range(len(numeric_sequence) - 1):
+                    if direction_param == "right" and numeric_sequence[i + 1] < numeric_sequence[i]:
+                        reversal_idx = i
+                        break
+                    if direction_param == "left" and numeric_sequence[i + 1] > numeric_sequence[i]:
+                        reversal_idx = i
                         break
 
-                if marker_idx is not None:
-                    # Points before the marker, and points after — "?" itself is not
-                    # plotted. NOTE: filter out value == "?" explicitly, not just by
-                    # index relative to the first marker — C-SCAN emits the marker as
-                    # TWO consecutive "?" entries (see cscan_disk's build_disk_result),
-                    # so index-only filtering would let the second "?" slip into
-                    # `after` as a literal string mixed into a numeric axis.
-                    before = [(v, s) for s, v in enumerate(sequence) if s < marker_idx and v != "?"]
-                    after = [(v, s) for s, v in enumerate(sequence) if s > marker_idx and v != "?"]
+                # Build display labels — start from real numbers, override
+                # with "?" only at genuine edge-visit points, only for
+                # EDGE_TOUCHING_ALGOS.
+                display_labels = [str(v) for v in numeric_sequence]
+                if touches_edge and reversal_idx is not None:
+                    if direction_param == "right" and numeric_sequence[reversal_idx] == max_track:
+                        display_labels[reversal_idx] = "?"
+                    elif direction_param == "left" and numeric_sequence[reversal_idx] == 0:
+                        display_labels[reversal_idx] = "?"
+                    # The point right after a wrap (C-SCAN only) may be the
+                    # opposite boundary too, if no real request sits there.
+                    if reversal_idx + 1 < len(numeric_sequence):
+                        nxt = numeric_sequence[reversal_idx + 1]
+                        original_requests = disk_result.get("requests", [])
+                        if direction_param == "right" and nxt == 0 and 0 not in original_requests:
+                            display_labels[reversal_idx + 1] = "?"
+                        elif direction_param == "left" and nxt == max_track and max_track not in original_requests:
+                            display_labels[reversal_idx + 1] = "?"
 
-                    fig = go.Figure()
+                fig = go.Figure()
 
-                    # Solid segment before the boundary jump
+                if is_jump_algo and reversal_idx is not None:
+                    # Split into solid-before, dashed-jump, solid-after.
+                    before = [(v, s) for s, v in enumerate(numeric_sequence) if s <= reversal_idx]
+                    after = [(v, s) for s, v in enumerate(numeric_sequence) if s > reversal_idx]
+
                     if before:
                         fig.add_trace(go.Scatter(
                             x=[p[0] for p in before],
@@ -562,11 +635,11 @@ elif page == "Mass Storage":
                             mode="lines+markers",
                             line=dict(color="#00ff9d", width=2),
                             marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                            text=[display_labels[p[1]] for p in before],
+                            hovertemplate="%{text}<extra></extra>",
                             showlegend=False,
                         ))
 
-                    # Dashed connector spanning the "?" boundary touch —
-                    # connects last point before the marker to first point after it
                     if before and after:
                         fig.add_trace(go.Scatter(
                             x=[before[-1][0], after[0][0]],
@@ -576,7 +649,6 @@ elif page == "Mass Storage":
                             showlegend=False,
                         ))
 
-                    # Solid segment after the boundary jump
                     if after:
                         fig.add_trace(go.Scatter(
                             x=[p[0] for p in after],
@@ -584,19 +656,34 @@ elif page == "Mass Storage":
                             mode="lines+markers",
                             line=dict(color="#00ff9d", width=2),
                             marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                            text=[display_labels[p[1]] for p in after],
+                            hovertemplate="%{text}<extra></extra>",
                             showlegend=False,
                         ))
                 else:
-                    # FCFS, SSTF, SCAN, LOOK — no "?" marker, single continuous solid path
-                    fig = go.Figure()
+                    # FCFS, SSTF, SCAN, LOOK — single continuous solid path,
+                    # even if it touches the edge (SCAN) or reverses (LOOK).
                     fig.add_trace(go.Scatter(
-                        x=list(sequence),
-                        y=list(range(len(sequence))),
+                        x=numeric_sequence,
+                        y=list(range(len(numeric_sequence))),
                         mode="lines+markers",
                         line=dict(color="#00ff9d", width=2),
                         marker=dict(size=8, color="#00ff9d", symbol="circle"),
+                        text=display_labels,
+                        hovertemplate="%{text}<extra></extra>",
                         showlegend=False,
                     ))
+
+                # Override the x-axis tick at the edge position to show "?"
+                # instead of the real number, for algorithms that touch the
+                # edge — purely a label swap, the point's true plotted
+                # position is unchanged.
+                tickvals, ticktext = None, None
+                if touches_edge:
+                    edge_val = max_track if direction_param == "right" else 0
+                    base_ticks = sorted(set(numeric_sequence) | {0, max_track})
+                    tickvals = base_ticks
+                    ticktext = ["?" if t == edge_val else str(t) for t in base_ticks]
 
                 fig.update_layout(
                     xaxis_title="Cylinder Position",
@@ -604,14 +691,21 @@ elif page == "Mass Storage":
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#e2e8f0"),
-                    xaxis=dict(gridcolor="#2a2d3e", range=[0, number_of_tracks]),
+                    xaxis=dict(
+                        gridcolor="#2a2d3e",
+                        range=[0, number_of_tracks],
+                        tickvals=tickvals,
+                        ticktext=ticktext,
+                    ),
                     yaxis=dict(gridcolor="#2a2d3e", autorange="reversed"),
                     showlegend=False,
                     margin=dict(l=40, r=20, t=20, b=40),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                if marker_idx is not None:
-                    st.caption("Dashed segment = head jump-back at boundary (no service), solid = servicing requests.")
+                if is_jump_algo and reversal_idx is not None:
+                    st.caption("Dashed segment = wraparound jump (no service along the way), solid = servicing requests.")
+                elif touches_edge:
+                    st.caption("'?' marks the disk boundary the sweep reaches — head physically travels there and reverses in place (no jump).")
 
         with tab_movements:
             movements = disk_result.get("movements", [])
@@ -649,6 +743,17 @@ elif page == "Memory":
         key="fit_strategy_select",
         help="Memory allocation strategy. First Fit, Best Fit, Worst Fit, or Next Fit."
     )
+
+    # KNOWN BACKEND GAP: mvt.py's find_fit() only branches on "best"/"worst" —
+    # "next" falls through to the same behavior as "first" (always searches
+    # from the start of the block list, never resumes from the last
+    # allocation point). Selecting Next Fit currently produces IDENTICAL
+    # results to First Fit, silently — no error, just a quietly wrong
+    # strategy. Flagged to whoever owns mvt.py; not something app.py can
+    # work around, since the backend never receives or could derive "where
+    # the last search left off" from a single stateless request anyway.
+    if fit_strategy == "next":
+        st.sidebar.caption("⚠️ Next Fit currently behaves identically to First Fit on the backend (not yet distinctly implemented).")
 
     # Per-algorithm process queue: switching fit strategy resets the process
     # list, same as the Scheduler page — old results no longer correspond to
@@ -732,16 +837,17 @@ elif page == "Memory":
     st.subheader(f"Strategy: {fit_strategy.capitalize()} Fit — {compaction}")
 
     if mem_run_clicked:
-        # NOTE: MVT endpoints not yet in config.py — pending Architect.
-        # Endpoint will be either /memory/mvt_with_compaction or /memory/mvt_without_compaction
         mem_payload = {
             "total_memory": int(total_memory),
             "fit_strategy": fit_strategy,
             "processes": st.session_state.memory_processes,
         }
 
-        # Placeholder endpoint — update when Architect adds to config.py
-        mem_endpoint = f"{API_BASE}/memory/mvt_with_compaction" if compaction == "With Compaction" else f"{API_BASE}/memory/mvt_without_compaction"
+        # Now using the real named constants from config.py (added by the
+        # architect) instead of hand-built f-strings — same endpoint paths,
+        # but a route rename now only needs a config.py change, not a hunt
+        # through app.py for hardcoded URLs.
+        mem_endpoint = MEMORY_MVT_WITH_COMPACTION_API if compaction == "With Compaction" else MEMORY_MVT_WITHOUT_COMPACTION_API
 
         with st.status("Running memory simulation...", expanded=True) as status:
             try:
@@ -769,7 +875,7 @@ elif page == "Memory":
 
             except requests.exceptions.ConnectionError:
                 status.update(label="Cannot connect to API.", state="error", expanded=False)
-                st.error("Cannot connect to the API. Is the backend running? (Memory endpoints pending from Backend Architect)")
+                st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.memory_response = None
 
     if st.session_state.memory_response is not None:
@@ -1025,15 +1131,15 @@ elif page == "Virtual Memory":
         key="vm_run_btn"
     )
 
-    # VM algorithm to endpoint mapping
-    # NOTE: VM endpoints not yet in config.py — pending Architect.
+    # VM algorithm to endpoint mapping — now using the real named constants
+    # from config.py (added by the architect) instead of hand-built f-strings.
     VM_ALGORITHM_MAP = {
-        "FIFO": f"{API_BASE}/vm/fifo",
-        "LRU": f"{API_BASE}/vm/lru",
-        "LRU Approximation": f"{API_BASE}/vm/lru_approx",
-        "Optimal": f"{API_BASE}/vm/optimal",
-        "LFU": f"{API_BASE}/vm/lfu",
-        "MFU": f"{API_BASE}/vm/mfu",
+        "FIFO": VM_FIFO_API,
+        "LRU": VM_LRU_API,
+        "LRU Approximation": VM_LRU_APPROX_API,
+        "Optimal": VM_OPTIMAL_API,
+        "LFU": VM_LFU_API,
+        "MFU": VM_MFU_API,
     }
 
     # Main area
@@ -1075,7 +1181,7 @@ elif page == "Virtual Memory":
 
             except requests.exceptions.ConnectionError:
                 status.update(label="Cannot connect to API.", state="error", expanded=False)
-                st.error("Cannot connect to the API. Is the backend running? (Virtual Memory endpoints pending from Backend Architect)")
+                st.error("Cannot connect to the API. Is the backend running?")
                 st.session_state.vm_response = None
 
     if st.session_state.vm_response is not None:
@@ -1101,38 +1207,110 @@ elif page == "Virtual Memory":
 
             st.divider()
 
-            # Page fault visualization — Plotly bar chart
+            # Page fault visualization — textbook-style stacked frame columns
+            # (matches the standard OS textbook diagram: one column per
+            # reference, each column shows the full set of pages currently
+            # resident in memory at that step, color-coded red on a fault).
+            #
+            # IMPORTANT DESIGN NOTE: frames_state's list order does NOT
+            # reliably convey recency/age — FIFO (and others) replace a
+            # victim IN PLACE at its old list index, so position-in-list is
+            # an implementation artifact, not a meaningful "how old is this
+            # page" signal. Sorting numerically per column gives a stable,
+            # honest layout instead of implying an age story the data
+            # doesn't actually support.
+            #
+            # For LFU / MFU / LRU Approximation, the backend's "frequencies"
+            # field carries real diagnostic value (true use-counts for LFU/
+            # MFU, reference bits — 0 or 1 — for LRU Approximation's
+            # second-chance algorithm) and is folded into the hover text
+            # when present. FIFO/LRU/Optimal always send frequencies=None,
+            # so they just show the page number with no extra annotation.
             st.subheader("Page Fault Timeline")
             timeline = vm_result.get("timeline", [])
             if timeline:
                 import plotly.graph_objects as go
-                pages_seq = [str(t["page"]) for t in timeline]
-                faults = [1 if t["fault"] else 0 for t in timeline]
-                colors = ["#ef4444" if f else "#00ff9d" for f in faults]
+
+                num_frames = vm_result.get("frames", max((len(t.get("frames_state", [])) for t in timeline), default=1))
+                fault_color = "#ef4444"
+                hit_color = "#00ff9d"
+                empty_color = "#2a2d3e"
 
                 fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=list(range(len(pages_seq))),
-                    y=[1] * len(pages_seq),
-                    marker_color=colors,
-                    text=pages_seq,
-                    textposition="inside",
-                    hovertext=[f"Page {p}: {'FAULT' if f else 'HIT'}" for p, f in zip(pages_seq, faults)],
-                    hoverinfo="text",
-                ))
+                # One trace PER ROW (frame slot), built column by column, so
+                # each column's frame contents stack from row 0 (bottom) to
+                # row num_frames-1 (top) — matching the textbook's vertical
+                # frame-box layout.
+                row_traces = [{"x": [], "y": [], "base": [], "text": [], "color": [], "customdata": []} for _ in range(num_frames)]
+
+                for ref_idx, t in enumerate(timeline):
+                    page = t.get("page")
+                    fault = t.get("fault", False)
+                    frames_state = sorted(t.get("frames_state", []) or [])
+                    freqs = t.get("frequencies")
+                    label = str(ref_idx + 1)
+                    bar_color = fault_color if fault else hit_color
+
+                    for row in range(num_frames):
+                        trace = row_traces[row]
+                        trace["x"].append(label)
+                        trace["base"].append(row)
+                        trace["y"].append(1)
+                        if row < len(frames_state):
+                            p = frames_state[row]
+                            # NOTE: after a real HTTP round-trip, JSON object
+                            # keys are always strings — frequencies (a dict)
+                            # will have string keys ("7") even though
+                            # frames_state (a plain list) keeps its int
+                            # values (7). A direct `p in freqs` lookup with
+                            # an int p against string keys silently fails
+                            # every time, dropping all hover annotations with
+                            # no error. Look up by str(p) instead.
+                            freq_val = freqs.get(str(p)) if freqs is not None else None
+                            if freq_val is not None:
+                                hover = f"Page {p} (ref bit/freq: {freq_val})"
+                            else:
+                                hover = f"Page {p}"
+                            trace["text"].append(str(p))
+                            trace["color"].append(bar_color)
+                            trace["customdata"].append(hover)
+                        else:
+                            # Frame slot not yet filled (early references before
+                            # all frames are occupied for the first time).
+                            trace["text"].append("")
+                            trace["color"].append(empty_color)
+                            trace["customdata"].append("empty")
+
+                for row in range(num_frames):
+                    trace = row_traces[row]
+                    fig.add_trace(go.Bar(
+                        x=trace["x"],
+                        y=trace["y"],
+                        base=trace["base"],
+                        text=trace["text"],
+                        textposition="inside",
+                        marker_color=trace["color"],
+                        marker_line=dict(color="#0f1117", width=1),
+                        customdata=trace["customdata"],
+                        hovertemplate="%{customdata}<extra></extra>",
+                        insidetextanchor="middle",
+                        showlegend=False,
+                    ))
+
                 fig.update_layout(
+                    barmode="stack",
                     xaxis_title="Reference",
-                    yaxis=dict(visible=False),
+                    yaxis=dict(visible=False, range=[0, num_frames]),
                     plot_bgcolor="rgba(0,0,0,0)",
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#e2e8f0"),
                     xaxis=dict(gridcolor="#2a2d3e"),
                     showlegend=False,
                     margin=dict(l=20, r=20, t=20, b=40),
-                    height=120,
+                    height=max(180, 60 * num_frames),
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                st.caption("🔴 Red = Page Fault  |  🟢 Green = Page Hit")
+                st.caption("🔴 Red column = Page Fault  |  🟢 Green column = Page Hit  |  Rows sorted numerically — list position in the raw data doesn't represent recency/age.")
 
         with tab_timeline:
             timeline = vm_result.get("timeline", [])
@@ -1191,9 +1369,8 @@ elif page == "Compare":
             if not has_priority_data:
                 st.warning(
                     "Your process list doesn't have priority values yet, so Priority algorithms "
-                    "will run with every process treated as equal priority (priority 0). "
-                    "To give Priority algorithms meaningful results, add processes with priority "
-                    "on the Scheduler page first."
+                    "will be excluded from this comparison (Round Robin and the rest will still run). "
+                    "To include Priority algorithms, add processes with priority on the Scheduler page first."
                 )
         else:
             st.info("No processes added yet. Go to the Scheduler page to add processes first.")
