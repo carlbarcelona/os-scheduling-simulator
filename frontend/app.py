@@ -72,6 +72,26 @@ if "disk_params" not in st.session_state:
 if "disk_params_set" not in st.session_state:
     st.session_state.disk_params_set = False
 
+# Memory (MVT) inputs mirrored for the Compare page, like disk_params above.
+if "memory_params" not in st.session_state:
+    st.session_state.memory_params = {"total_memory": 1, "compaction": "With Compaction"}
+
+if "memory_params_set" not in st.session_state:
+    st.session_state.memory_params_set = False
+
+if "memory_compare_results" not in st.session_state:
+    st.session_state.memory_compare_results = None
+
+# Virtual Memory (page replacement) inputs mirrored for the Compare page.
+if "vm_params" not in st.session_state:
+    st.session_state.vm_params = {"pages_input": "", "frames": 1}
+
+if "vm_params_set" not in st.session_state:
+    st.session_state.vm_params_set = False
+
+if "vm_compare_results" not in st.session_state:
+    st.session_state.vm_compare_results = None
+
 if "last_disk_algorithm" not in st.session_state:
     st.session_state.last_disk_algorithm = None
 
@@ -117,7 +137,7 @@ if mode == "Chatbot":
 
 page = st.sidebar.radio(
     "Navigate",
-    ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare", "Recommend"],
+    ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare"],
     label_visibility="collapsed"
 )
 
@@ -800,6 +820,11 @@ elif page == "Memory":
     )
     st.session_state.sticky_compaction = compaction
 
+    # Mirror the current inputs so the Compare page can reuse them (memory_processes
+    # is already a shared session list).
+    st.session_state.memory_params = {"total_memory": int(total_memory), "compaction": compaction}
+    st.session_state.memory_params_set = True
+
     st.sidebar.divider()
     st.sidebar.subheader("Add Process")
 
@@ -1148,6 +1173,11 @@ elif page == "Virtual Memory":
         st.sidebar.error("Invalid input — enter comma-separated integers only.")
         vm_pages_list = []
 
+    # Mirror the current inputs so the Compare page can reuse them.
+    if vm_pages_list:
+        st.session_state.vm_params = {"pages_input": vm_pages_input, "frames": int(vm_frames)}
+        st.session_state.vm_params_set = True
+
     st.sidebar.divider()
     vm_run_clicked = st.sidebar.button(
         f"▶ Run {vm_algorithm}",
@@ -1358,7 +1388,7 @@ elif page == "Compare":
 
     section = st.radio(
         "Compare Type",
-        ["CPU Scheduling", "Disk Scheduling"],
+        ["CPU Scheduling", "Disk Scheduling", "Memory (MVT)", "Virtual Memory"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -1394,14 +1424,22 @@ elif page == "Compare":
 
             if not has_priority_data:
                 st.warning(
-                    "Your process list doesn't have priority values yet, so Priority algorithms "
-                    "will be excluded from this comparison (Round Robin and the rest will still run). "
-                    "To include Priority algorithms, add processes with priority on the Scheduler page first."
+                    "Your process list doesn't have priority values yet. The Priority algorithms "
+                    "still run, but they treat every process as equal priority (0), so their result "
+                    "mirrors FCFS ordering. Add processes with priority on the Scheduler page first "
+                    "for a meaningful Priority comparison."
                 )
         else:
             st.info("No processes added yet. Go to the Scheduler page to add processes first.")
 
         st.divider()
+
+        cpu_compare_quantum = st.number_input(
+            "Round Robin quantum",
+            min_value=1, step=1, value=2,
+            key="cpu_compare_quantum",
+            help="Time slice for Round Robin in this comparison. Other algorithms ignore it.",
+        )
 
         cpu_compare_disabled = not has_processes
 
@@ -1411,7 +1449,10 @@ elif page == "Compare":
                     st.write("Sending request to /schedule/analyze...")
                     response = requests.post(
                         SCHEDULE_ANALYZE_API,
-                        json={"processes": st.session_state.processes},
+                        json={
+                            "processes": st.session_state.processes,
+                            "quantum": int(cpu_compare_quantum),
+                        },
                         timeout=10,
                     )
                     response.raise_for_status()
@@ -1614,15 +1655,196 @@ elif page == "Compare":
         else:
             st.info("Run a comparison above to see disk scheduling results here.")
 
-# -------------------------------------------------------------
-# PAGE: RECOMMEND
-# -------------------------------------------------------------
-elif page == "Recommend":
-    st.title("Recommendation")
-    st.caption("Get an algorithm recommendation based on your process set.")
-    st.divider()
-    st.info("Coming soon - waiting for Backend Architect to deliver /recommend endpoint (Week 3).")
-    # response = requests.post(f"{API_BASE}/recommend", json={"processes": st.session_state.processes})
-    # result = response.json()
-    # st.write(f"Best Algorithm: {result['best_algorithm']}")
-    # st.write(f"Reason: {result['reason']}")
+    elif section == "Memory (MVT)":
+        st.subheader("Memory (MVT) — Fit Strategy Comparison")
+        st.caption("Runs First / Best / Worst fit on the same processes. Key metric: processes allocated vs. failed.")
+
+        st.divider()
+
+        has_mem = st.session_state.memory_params_set and len(st.session_state.memory_processes) > 0
+        if has_mem:
+            mparams = st.session_state.memory_params
+            mem_compaction = mparams["compaction"]
+            st.markdown("**Parameters from Memory page:**")
+            st.text(f"Total Memory: {mparams['total_memory']} K")
+            st.text(f"Compaction: {mem_compaction}")
+            st.text(f"Processes: {len(st.session_state.memory_processes)}")
+            for p in st.session_state.memory_processes:
+                st.text(f"{p['pid']}  |  Size: {p['size']}  |  Burst: {p['burst_time']}")
+        else:
+            st.info("No processes added yet. Go to the Memory page to set total memory and add processes first.")
+
+        st.divider()
+
+        if st.button("▶ Run Memory Compare", type="primary", disabled=not has_mem, key="memory_compare_btn"):
+            mem_payload = {
+                "total_memory": int(st.session_state.memory_params["total_memory"]),
+                "processes": st.session_state.memory_processes,
+                "compaction": st.session_state.memory_params["compaction"] == "With Compaction",
+            }
+            with st.status("Running memory comparison...", expanded=True) as status:
+                try:
+                    st.write("Sending request to /memory/analyze...")
+                    response = requests.post(MEMORY_ANALYZE_API, json=mem_payload, timeout=10)
+                    response.raise_for_status()
+                    st.session_state.memory_compare_results = response.json()
+                    status.update(label="Memory comparison complete!", state="complete", expanded=False)
+                    st.toast("Memory comparison complete!", icon="✅")
+                except requests.exceptions.Timeout:
+                    status.update(label="Request timed out.", state="error", expanded=False)
+                    st.error("Request timed out. Is the backend running?")
+                    st.session_state.memory_compare_results = None
+                except requests.exceptions.HTTPError as e:
+                    try:
+                        detail = e.response.json().get("detail", str(e))
+                    except Exception:
+                        detail = str(e)
+                    status.update(label="API error.", state="error", expanded=False)
+                    st.error(f"API error: {detail}")
+                    st.session_state.memory_compare_results = None
+                except requests.exceptions.ConnectionError:
+                    status.update(label="Cannot connect to API.", state="error", expanded=False)
+                    st.error("Cannot connect to the API. Is the backend running?")
+                    st.session_state.memory_compare_results = None
+
+        if st.session_state.memory_compare_results is not None:
+            import plotly.graph_objects as go
+
+            mem_results = st.session_state.memory_compare_results.get("results", {})
+            strategies = list(mem_results.keys())
+            allocated = [mem_results[s].get("allocated_count", 0) for s in strategies]
+            failed = [mem_results[s].get("failed_count", 0) for s in strategies]
+
+            tab_chart, tab_table, tab_raw = st.tabs(["Chart", "Table", "Raw Response"])
+
+            with tab_chart:
+                st.subheader("Allocation Success by Fit Strategy")
+                st.caption("More allocated (fewer failed) = better packing for this workload.")
+                fig = go.Figure()
+                fig.add_trace(go.Bar(name="Allocated", x=[s.title() for s in strategies], y=allocated, marker_color="#00ff9d"))
+                fig.add_trace(go.Bar(name="Failed", x=[s.title() for s in strategies], y=failed, marker_color="#ef4444"))
+                fig.update_layout(
+                    barmode="group",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e", title="Processes"),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#2a2d3e"),
+                    margin=dict(l=40, r=20, t=20, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab_table:
+                mem_table_data = []
+                for s in strategies:
+                    mem_table_data.append({
+                        "Fit Strategy": s.title(),
+                        "Allocated": mem_results[s].get("allocated_count", 0),
+                        "Failed": mem_results[s].get("failed_count", 0),
+                        "CPU Utilization (%)": round(mem_results[s].get("cpu_utilization", 0), 2),
+                    })
+                st.dataframe(mem_table_data, use_container_width=True, hide_index=True)
+
+            with tab_raw:
+                st.json(mem_results)
+
+        else:
+            st.info("Run a comparison above to see memory allocation results here.")
+
+    elif section == "Virtual Memory":
+        st.subheader("Virtual Memory — Page Replacement Comparison")
+        st.caption("Runs all page replacement algorithms on the same reference string. Key metric: page faults.")
+
+        st.divider()
+
+        try:
+            vm_cmp_pages = [int(p.strip()) for p in st.session_state.vm_params["pages_input"].split(",") if p.strip()]
+        except (ValueError, AttributeError):
+            vm_cmp_pages = []
+        has_vm = st.session_state.vm_params_set and len(vm_cmp_pages) > 0
+
+        if has_vm:
+            vparams = st.session_state.vm_params
+            st.markdown("**Parameters from Virtual Memory page:**")
+            st.text(f"Page Reference String: {vparams['pages_input']}")
+            st.text(f"Frames: {vparams['frames']}")
+        else:
+            st.info("No reference string set yet. Go to the Virtual Memory page to enter pages and frames first.")
+
+        st.divider()
+
+        if st.button("▶ Run VM Compare", type="primary", disabled=not has_vm, key="vm_compare_btn"):
+            vm_cmp_payload = {"pages": vm_cmp_pages, "frames": int(st.session_state.vm_params["frames"])}
+            with st.status("Running page replacement comparison...", expanded=True) as status:
+                try:
+                    st.write("Sending request to /vm/analyze...")
+                    response = requests.post(VM_ANALYZE_API, json=vm_cmp_payload, timeout=10)
+                    response.raise_for_status()
+                    st.session_state.vm_compare_results = response.json()
+                    status.update(label="Page replacement comparison complete!", state="complete", expanded=False)
+                    st.toast("Page replacement comparison complete!", icon="✅")
+                except requests.exceptions.Timeout:
+                    status.update(label="Request timed out.", state="error", expanded=False)
+                    st.error("Request timed out. Is the backend running?")
+                    st.session_state.vm_compare_results = None
+                except requests.exceptions.HTTPError as e:
+                    try:
+                        detail = e.response.json().get("detail", str(e))
+                    except Exception:
+                        detail = str(e)
+                    status.update(label="API error.", state="error", expanded=False)
+                    st.error(f"API error: {detail}")
+                    st.session_state.vm_compare_results = None
+                except requests.exceptions.ConnectionError:
+                    status.update(label="Cannot connect to API.", state="error", expanded=False)
+                    st.error("Cannot connect to the API. Is the backend running?")
+                    st.session_state.vm_compare_results = None
+
+        if st.session_state.vm_compare_results is not None:
+            import plotly.graph_objects as go
+
+            vm_results = st.session_state.vm_compare_results.get("results", {})
+            vm_algo_names = list(vm_results.keys())
+            fault_counts = [vm_results[a].get("page_fault_count", 0) for a in vm_algo_names]
+
+            tab_chart, tab_table, tab_raw = st.tabs(["Chart", "Table", "Raw Response"])
+
+            with tab_chart:
+                st.subheader("Page Fault Comparison")
+                st.caption("Fewer page faults = more efficient algorithm.")
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=[a.upper() for a in vm_algo_names],
+                    y=fault_counts,
+                    marker_color="#3b82f6",
+                    text=fault_counts,
+                    textposition="outside",
+                ))
+                fig.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#e2e8f0"),
+                    xaxis=dict(gridcolor="#2a2d3e"),
+                    yaxis=dict(gridcolor="#2a2d3e", title="Page Faults"),
+                    showlegend=False,
+                    margin=dict(l=40, r=20, t=40, b=40),
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            with tab_table:
+                vm_table_data = []
+                for a in vm_algo_names:
+                    vm_table_data.append({
+                        "Algorithm": a.upper(),
+                        "Page Faults": vm_results[a].get("page_fault_count", 0),
+                        "Fault Rate": round(vm_results[a].get("page_fault_rate", 0), 2),
+                    })
+                vm_table_data.sort(key=lambda x: x["Page Faults"])
+                st.dataframe(vm_table_data, use_container_width=True, hide_index=True)
+
+            with tab_raw:
+                st.json(vm_results)
+
+        else:
+            st.info("Run a comparison above to see page replacement results here.")

@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import requests
@@ -31,7 +32,15 @@ import streamlit as st
 # frontend/llm.py  ->  project root is one level up from this file's dir.
 _FRONTEND_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _FRONTEND_DIR.parent
-MODELS_DIR = _PROJECT_ROOT / "models"
+
+# Where downloaded GGUF models live / are detected. In a frozen (.exe) build the
+# source tree lives in a read-only temp dir that's wiped on exit, so anchor the
+# models folder next to the executable instead — that keeps a downloaded model
+# persistent and discoverable on the next launch.
+if getattr(sys, "frozen", False):
+    MODELS_DIR = Path(sys.executable).resolve().parent / "models"
+else:
+    MODELS_DIR = _PROJECT_ROOT / "models"
 
 # Canonical local filename (matches the user's existing copy).
 MODEL_FILENAME = "phi-3-mini-q4_k_m.gguf"

@@ -14,4 +14,12 @@ dependencies = [
     # Local LLM runtime for the chatbot (CPU). If wheels aren't found, add the
     # extra index: https://abetlen.github.io/llama-cpp-python/whl/cpu
     "llama-cpp-python>=0.3.0",
+    "fastapi>=0.138.0",
+    "uvicorn>=0.47.0",
+    "pydantic>=2.13.4",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
 ]
