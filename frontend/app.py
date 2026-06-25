@@ -101,6 +101,20 @@ if "sticky_vm_algorithm" not in st.session_state:
 # -- SIDEBAR NAVIGATION
 st.sidebar.title("⚙️ OS Scheduling Simulator")
 st.sidebar.caption("OS Scheduling Algorithm Visualizer")
+
+# Top-level input mode: the conversational Chatbot vs the manual form-driven
+# pages. The chatbot stays a self-contained module — this only mounts it; all
+# chat/LLM logic lives in chatbot.py / llm.py.
+mode = st.sidebar.segmented_control(
+    "Mode", ["Manual", "Chatbot"], default="Manual", label_visibility="collapsed"
+)
+st.sidebar.divider()
+
+if mode == "Chatbot":
+    from chatbot import render_chatbot  # lazy: only load the bot/llm when used
+    render_chatbot()
+    st.stop()  # halt here so the manual pages below don't render in chat mode
+
 page = st.sidebar.radio(
     "Navigate",
     ["Scheduler", "Mass Storage", "Memory", "Virtual Memory", "Compare", "Recommend"],
@@ -363,7 +377,19 @@ if page == "Scheduler":
 
         with tab_gantt:
             from components.gantt import render_gantt
-            st.plotly_chart(render_gantt(result["timeline"], result["schedule"]), use_container_width=True)
+            gantt_layout = st.segmented_control(
+                "Layout",
+                ["Single lane", "Per process"],
+                default="Single lane",
+                key="cpu_gantt_layout",
+                label_visibility="collapsed",
+                help="Single lane = classic CPU timeline; Per process = one row per process.",
+            )
+            layout_arg = "per_process" if gantt_layout == "Per process" else "single"
+            st.plotly_chart(
+                render_gantt(result["timeline"], result["schedule"], layout=layout_arg),
+                use_container_width=True,
+            )
 
         with tab_raw:
             st.json(result)
