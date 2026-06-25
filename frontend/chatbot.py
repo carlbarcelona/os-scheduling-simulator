@@ -38,6 +38,7 @@ INTEGRATION (for the frontend engineer) — ~2 lines in app.py
     Standalone preview:  `streamlit run chatbot.py`
 """
 
+import html
 import json
 import re
 
@@ -821,7 +822,12 @@ def parse_message(user_text, use_llm: bool):
 # MODEL SETUP PANEL
 # ──────────────────────────────────────────────────────────────────────────
 def _render_model_panel():
-    """Show model status; offer download if missing. Returns True if LLM is usable."""
+    """Render setup UI for the not-ready states; return (use_llm, status).
+
+    Only the actionable not-ready branches draw anything here (offline-install
+    notice, or the download button). When the model is ready this stays silent —
+    render_chatbot() shows a compact, hover-to-reveal chip instead of a banner.
+    """
     status = llm.runtime_status()
 
     if not status["llama_installed"]:
@@ -832,7 +838,7 @@ def _render_model_panel():
             "```\npip install llama-cpp-python --extra-index-url "
             "https://abetlen.github.io/llama-cpp-python/whl/cpu\n```"
         )
-        return False
+        return False, status
 
     if not status["model_present"]:
         st.info("Phi-3 model not found. Download it once (~2.4 GB) to enable the full bot.")
@@ -850,10 +856,9 @@ def _render_model_panel():
             except Exception as e:
                 st.error(f"Download failed: {e}")
         st.caption("Until then I'll use the offline rule-based parser.")
-        return False
+        return False, status
 
-    st.success(f"Phi-3 ready · `{status['model_path']}`")
-    return True
+    return True, status
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -869,14 +874,19 @@ def render_chatbot():
         "Anything entered here is shared with the Scheduler and Compare pages."
     )
 
-    use_llm = _render_model_panel()
+    use_llm, status = _render_model_panel()
 
     top_l, top_r = st.columns([3, 1])
     with top_l:
+        # Compact model chip; the full path is concealed and revealed on hover
+        # (native browser title tooltip) so it isn't a distracting top banner.
+        chip = ""
+        if use_llm:
+            path = html.escape(status.get("model_path") or "")
+            chip = f"<span title=\"{path}\">🟢 Phi-3</span>  ·  "
         st.markdown(
-            f"**Algorithm:** `{st.session_state.sticky_cpu_algorithm}`  ·  "
-            f"**Quantum:** `{st.session_state.chat_quantum}`  ·  "
-            f"**Processes:** `{len(st.session_state.processes)}`"
+            chip + f"**Processes:** `{len(st.session_state.processes)}`",
+            unsafe_allow_html=True,
         )
     with top_r:
         if st.button("🗑️ Clear chat", use_container_width=True):
