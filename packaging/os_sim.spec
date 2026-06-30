@@ -50,6 +50,13 @@ for meta in ("streamlit", "plotly", "altair", "pandas", "numpy", "pyarrow"):
 for f in ("app.py", "config.py", "chatbot.py", "llm.py"):
     datas.append((str(FRONTEND / f), "."))
 
+# The `components` package (gantt charts, etc.) is imported lazily inside app.py
+# at runtime (e.g. `from components.gantt import render_gantt`), so analysing
+# launcher.py alone never sees it. Ship the whole package, preserving its folder
+# so it imports as `components.*` from the bundle root.
+for comp in sorted((FRONTEND / "components").glob("*.py")):
+    datas.append((str(comp), "components"))
+
 # Backend: launcher.py imports `main`, which statically imports the algorithm
 # modules; collect them explicitly to be safe.
 hiddenimports += collect_submodules("algorithms")

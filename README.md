@@ -58,8 +58,9 @@ uv run --project ../frontend pyinstaller os_sim.spec
 # -> dist/OS-Simulator.exe
 ```
 
-Run it by double-clicking `dist/OS-Simulator.exe` (a console window shows startup
-logs, then a browser tab opens).
+Run it by double-clicking `dist/OS-Simulator.exe`. It runs **windowless** — no
+terminal appears; after a few seconds your default browser opens at the app. Startup
+logs are written to `os-simulator.log` next to the executable for troubleshooting.
 
 **AI chatbot model:** the ~2.4 GB Phi-3 GGUF model is **not** bundled. On first use of
 the Chatbot, the app detects whether the model is present and, if not, offers to
