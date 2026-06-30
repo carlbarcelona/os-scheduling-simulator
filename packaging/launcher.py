@@ -91,9 +91,49 @@ def _wait_backend(timeout=20.0) -> bool:
     return False
 
 
+def _already_running() -> bool:
+    """True if another OS-Simulator instance is already serving on this machine.
+
+    The windowless build shows no window and boots silently for several seconds,
+    so users naturally double-click it again thinking nothing happened. Without a
+    guard, that starts a SECOND instance which collides on the ports (Errno 10048)
+    and still opens its own browser tab — the "two tabs" symptom. We detect a live
+    instance by hitting our own backend health endpoint and confirming it's ours.
+    """
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{BACKEND_PORT}/", timeout=1) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return data.get("status") == "ok" and "Simulator" in data.get("message", "")
+    except Exception:
+        return False
+
+
+def _wait_ui(timeout=30.0) -> bool:
+    """Poll the Streamlit port until it accepts connections.
+
+    The windowless build shows no terminal, so opening the browser before the UI
+    has bound would land the user on a bare connection-error page with no other
+    feedback. Wait for the port first (with a timeout fallback) instead.
+    """
+    import socket
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            if sock.connect_ex(("127.0.0.1", UI_PORT)) == 0:
+                return True
+        time.sleep(0.3)
+    return False
+
+
 def _open_browser():
-    # Give Streamlit a moment to bind the port before opening the tab.
-    time.sleep(3.0)
+    # Open only once the UI port is actually serving, so the silent build never
+    # opens onto a connection-refused page. Falls back after the timeout.
+    _wait_ui()
     webbrowser.open(f"http://localhost:{UI_PORT}")
 
 
@@ -141,6 +181,15 @@ def _force_production_mode():
 
 def main_entry():
     _redirect_output_if_windowed()
+
+    # Single-instance guard: if the app is already up (e.g. the user double-clicked
+    # the silent, windowless exe a second time), don't start a duplicate that would
+    # fight over the ports and pop a second browser tab. Just focus the running one.
+    if _already_running():
+        print("[launcher] an instance is already running; opening browser and exiting.")
+        webbrowser.open(f"http://localhost:{UI_PORT}")
+        return
+
     _force_production_mode()
     _patch_streamlit_static_dir()
     print("[launcher] starting backend ...")

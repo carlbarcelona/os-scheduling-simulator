@@ -6,6 +6,10 @@ dist/
 wheels/
 *.egg-info
 
+# Packaged Windows builds — distributed via GitHub Releases, never committed
+OS-Simulator-Build/
+*.exe
+
 # Virtual environments
 .venv
 
