@@ -1,22 +1,22 @@
 processes = []
 process_count = 0
 
-while True:
-    process_count += 1
-    arrival_time = float(input("Enter arrival time: "))
-    burst_time = float(input("Enter burst time: "))
-    processes.append({
-        "pid": f"P{process_count}",
-        "arrival_time": arrival_time,
-        "burst_time": burst_time,
-        "priority": 0
-    })
-    if input("Add more entries (y/n): ").lower() != "y":
-        break
+# while True:
+#     process_count += 1
+#     arrival_time = float(input("Enter arrival time: "))
+#     burst_time = float(input("Enter burst time: "))
+#     processes.append({
+#         "pid": f"P{process_count}",
+#         "arrival_time": arrival_time,
+#         "burst_time": burst_time,
+#         "priority": 0
+#     })
+#     if input("Add more entries (y/n): ").lower() != "y":
+#         break
 
-quantum = int(input("Enter time quantum: "))
+# quantum = int(input("Enter time quantum: "))
 
-def round_robin(processes, quantum):
+def round_robin(processes, quantum=2):
     remaining = [{**t, "remaining_time": t["burst_time"]} for t in processes]
     remaining.sort(key=lambda t: t["arrival_time"])
 
@@ -95,11 +95,11 @@ def round_robin(processes, quantum):
         "cpu_utilization": (cpu_busy / current_time) * 100
     }
 
-result = round_robin(processes, quantum)
-print("\nGantt Chart:")
-for ent in result["timeline"]:
-    pid = ent["pid"] if ent["pid"] else "idle"
-    print(f"  {pid}: {ent['start']} --> {ent['end']}")
-print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
-print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
-print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")
+# result = round_robin(processes, quantum)
+# print("\nGantt Chart:")
+# for ent in result["timeline"]:
+#     pid = ent["pid"] if ent["pid"] else "idle"
+#     print(f"  {pid}: {ent['start']} --> {ent['end']}")
+# print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
+# print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
+# print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")

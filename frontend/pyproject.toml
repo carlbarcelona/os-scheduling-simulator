@@ -1,3 +1,4 @@
+
 [project]
 name = "frontend"
 version = "0.1.0"
@@ -10,4 +11,15 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.34.2",
     "streamlit>=1.57.0",
+    # Local LLM runtime for the chatbot (CPU). If wheels aren't found, add the
+    # extra index: https://abetlen.github.io/llama-cpp-python/whl/cpu
+    "llama-cpp-python>=0.3.0",
+    "fastapi>=0.138.0",
+    "uvicorn>=0.47.0",
+    "pydantic>=2.13.4",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.21.0",
 ]

@@ -1,21 +1,21 @@
-gantt_chart = []
 processes = []
 process_count = 0
 
-while True:
-    process_count += 1
-    arrival_time = float(input("Enter arrival time: "))
-    burst_time = float(input("Enter burst time: "))
-    processes.append({
-        "pid": f"P{process_count}",
-        "arrival_time": arrival_time,
-        "burst_time": burst_time,
-        "priority": 0
-    })
-    if input("Add more entries (y/n): ").lower() != "y":
-        break
+# while True:
+#     process_count += 1
+#     arrival_time = float(input("Enter arrival time: "))
+#     burst_time = float(input("Enter burst time: "))
+#     priority = int(input("Enter priority (lower = higher priority): "))
+#     processes.append({
+#         "pid": f"P{process_count}",
+#         "arrival_time": arrival_time,
+#         "burst_time": burst_time,
+#         "priority": priority
+#     })
+#     if input("Add more entries (y/n): ").lower() != "y":
+#         break
 
-def sjf_preemptive(processes):
+def priority_preemptive(processes):
     remaining = [{**t, "remaining_time": t["burst_time"]} for t in processes]
 
     schedule = []
@@ -39,7 +39,8 @@ def sjf_preemptive(processes):
             current_time = next_arrival["arrival_time"]
             continue
 
-        task = min(available, key=lambda t: t["remaining_time"])
+        # Pick highest priority (lowest number)
+        task = min(available, key=lambda t: t["priority"])
 
         task["remaining_time"] -= 1
         current_time += 1
@@ -78,11 +79,11 @@ def sjf_preemptive(processes):
         "cpu_utilization": (cpu_busy / current_time) * 100
     }
 
-result = sjf_preemptive(processes)
-print("\nGantt Chart:")
-for ent in result["timeline"]:
-    pid = ent["pid"] if ent["pid"] else "idle"
-    print(f"  {pid}: {ent['start']} --> {ent['end']}")
-print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
-print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
-print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")
+# result = priority_preemptive(processes)
+# print("\nGantt Chart:")
+# for ent in result["timeline"]:
+#     pid = ent["pid"] if ent["pid"] else "idle"
+#     print(f"  {pid}: {ent['start']} --> {ent['end']}")
+# print(f"Avg Waiting Time:    {result['avg_waiting_time']:.2f}")
+# print(f"Avg Turnaround Time: {result['avg_turnaround_time']:.2f}")
+# print(f"CPU Utilization:     {result['cpu_utilization']:.2f}%")

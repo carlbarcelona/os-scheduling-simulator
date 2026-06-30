@@ -3,3 +3,7 @@ requests
 plotly
 python-dotenv
 networkx
+# Local LLM runtime for the chatbot (CPU). If a plain install tries to compile
+# from source, use the prebuilt CPU wheel:
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+llama-cpp-python
